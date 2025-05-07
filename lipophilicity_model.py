@@ -19,12 +19,14 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torch_geometric
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GATConv, global_mean_pool
 from torch_geometric.data import Data, Dataset
 from torch_geometric.utils import add_self_loops
 from sklearn.model_selection import train_test_split
+from tqdm import tqdm, trange  # Import tqdm for progress bars
 
 # RDKit imports for molecule processing
 from rdkit import Chem
@@ -97,11 +99,12 @@ class MoleculeDataset(Dataset):
     
     def _prepare_data(self) -> List[Data]:
         """Process SMILES strings and create graph data objects."""
+        print("Processing molecular structures...")
         x_features = self._extract_node_features()
         edge_indices = self._extract_edge_indices()
         
         data_list = []
-        for i in range(len(self.smiles_list)):
+        for i in tqdm(range(len(self.smiles_list)), desc="Creating graph data objects"):
             x_graph = torch.tensor(x_features[i], dtype=torch.float32)
             edge_index_graph = torch.tensor(edge_indices[i], dtype=torch.long).t().contiguous()
             y_graph = torch.tensor([[self.y_values[i]]], dtype=torch.float32)
@@ -115,7 +118,7 @@ class MoleculeDataset(Dataset):
         """Extract edge indices from molecules for graph construction."""
         all_edge_indexes = []
         
-        for smiles in self.smiles_list:
+        for smiles in tqdm(self.smiles_list, desc="Extracting edge indices"):
             # Convert SMILES string to RDKit Mol object
             mol = Chem.MolFromSmiles(smiles)
             if mol is None:
@@ -143,7 +146,7 @@ class MoleculeDataset(Dataset):
         """Extract atom features for each molecule."""
         x_features = []
         
-        for idx, smiles in enumerate(self.smiles_list):
+        for idx, smiles in enumerate(tqdm(self.smiles_list, desc="Extracting node features")):
             # Convert SMILES to an RDKit molecule object
             mol = Chem.MolFromSmiles(smiles)
             if mol is None:
@@ -354,7 +357,7 @@ def load_additional_features(feature_paths: Dict[str, str], expected_length: int
     """
     features = {}
     
-    for feature_name, file_path in feature_paths.items():
+    for feature_name, file_path in tqdm(feature_paths.items(), desc="Loading feature files"):
         try:
             if not os.path.exists(file_path):
                 print(f"Warning: Feature file {file_path} not found. Using default values.")
@@ -426,7 +429,8 @@ def evaluate_model(model: nn.Module,
     with torch.no_grad():
         if use_batching:
             # Batched evaluation
-            for batch in data_loader:
+            progress_bar = tqdm(data_loader, desc="Evaluating batches")
+            for batch in progress_bar:
                 # Move batch to device
                 batch = batch.to(device)
                 
@@ -440,9 +444,16 @@ def evaluate_model(model: nn.Module,
                 rmse = compute_rmse(output, batch.y)
                 total_rmse += rmse.item() * batch_size
                 total_samples += batch_size
+                
+                # Update progress bar
+                progress_bar.set_postfix({
+                    'loss': f"{loss.item():.4f}", 
+                    'rmse': f"{rmse.item():.4f}"
+                })
         else:
             # Non-batched evaluation
-            for data_graph in data_loader:
+            progress_bar = tqdm(data_loader, desc="Evaluating samples")
+            for data_graph in progress_bar:
                 # Move data to device
                 data_graph = data_graph.to(device)
                 
@@ -455,6 +466,12 @@ def evaluate_model(model: nn.Module,
                 rmse = compute_rmse(output, data_graph.y)
                 total_rmse += rmse.item()
                 total_samples += 1
+                
+                # Update progress bar
+                progress_bar.set_postfix({
+                    'loss': f"{loss.item():.4f}", 
+                    'rmse': f"{rmse.item():.4f}"
+                })
     
     # Calculate averages
     avg_loss = total_loss / max(total_samples, 1)
@@ -490,7 +507,8 @@ def evaluate_model_with_predictions(model: nn.Module,
     with torch.no_grad():
         if use_batching:
             # Batched evaluation
-            for batch in data_loader:
+            progress_bar = tqdm(data_loader, desc="Test evaluation (batched)")
+            for batch in progress_bar:
                 # Move batch to device
                 batch = batch.to(device)
                 
@@ -499,17 +517,25 @@ def evaluate_model_with_predictions(model: nn.Module,
                 loss = criterion(output, batch.y)
                 
                 # Calculate metrics
-                total_loss += loss.item() * batch.num_graphs
+                batch_size = batch.num_graphs
+                total_loss += loss.item() * batch_size
                 rmse = compute_rmse(output, batch.y)
-                total_rmse += rmse.item() * batch.num_graphs
-                total_samples += batch.num_graphs
+                total_rmse += rmse.item() * batch_size
+                total_samples += batch_size
                 
                 # Store predictions
                 for y_true, y_pred in zip(batch.y.cpu().numpy().flatten(), output.cpu().numpy().flatten()):
                     predictions.append((float(y_true), float(y_pred)))
+                
+                # Update progress bar
+                progress_bar.set_postfix({
+                    'loss': f"{loss.item():.4f}", 
+                    'rmse': f"{rmse.item():.4f}"
+                })
         else:
             # Non-batched evaluation
-            for data_graph in data_loader:
+            progress_bar = tqdm(data_loader, desc="Test evaluation")
+            for data_graph in progress_bar:
                 # Move data to device
                 data_graph = data_graph.to(device)
                 
@@ -526,6 +552,12 @@ def evaluate_model_with_predictions(model: nn.Module,
                 # Store predictions
                 for y_true, y_pred in zip(data_graph.y.cpu().numpy().flatten(), output.cpu().numpy().flatten()):
                     predictions.append((float(y_true), float(y_pred)))
+                
+                # Update progress bar
+                progress_bar.set_postfix({
+                    'loss': f"{loss.item():.4f}", 
+                    'rmse': f"{rmse.item():.4f}"
+                })
     
     # Calculate averages
     avg_loss = total_loss / total_samples
@@ -547,7 +579,8 @@ def train_model(model: nn.Module,
                 use_batching: bool = False,
                 mixed_precision: bool = False,
                 gradient_accumulation_steps: int = 1,
-                early_stopping_patience: int = 20):
+                early_stopping_patience: int = 20,
+                grad_clip: float = 1.0):
     """
     Train the model and evaluate at intervals.
     """
@@ -572,15 +605,16 @@ def train_model(model: nn.Module,
     model = model.to(device)
     
     # Set up mixed precision training if requested (only for GPU)
-    scaler = torch.amp.GradScaler('cuda') if mixed_precision and device.type == 'cuda' else None
+    scaler = torch.amp.GradScaler() if mixed_precision and device.type == 'cuda' else None
     
     # Early stopping variables
     best_val_rmse = float('inf')
     best_model_state = None
     patience_counter = 0
     
-    # Training loop
-    for epoch in range(num_epochs):
+    # Training loop with tqdm progress bar
+    epoch_pbar = trange(num_epochs, desc="Training progress")
+    for epoch in epoch_pbar:
         model.train()
         total_loss = 0
         total_train_rmse = 0
@@ -592,12 +626,14 @@ def train_model(model: nn.Module,
         # Training
         if use_batching:
             # Batched training loop
-            for batch_idx, batch in enumerate(train_loader):
+            batch_pbar = tqdm(enumerate(train_loader), total=len(train_loader), 
+                              desc=f"Epoch {epoch+1}/{num_epochs}", leave=False)
+            for batch_idx, batch in batch_pbar:
                 # Move batch to device
                 batch = batch.to(device)
                 
                 # Mixed precision context if enabled
-                with torch.amp.autocast('cuda') if mixed_precision and device.type == 'cuda' else contextlib.nullcontext():
+                with torch.amp.autocast(device_type='cuda') if mixed_precision and device.type == 'cuda' else contextlib.nullcontext():
                     output = model(batch)
                     loss = criterion(output, batch.y) / gradient_accumulation_steps
                 
@@ -607,6 +643,9 @@ def train_model(model: nn.Module,
                     
                     # Gradient accumulation
                     if (batch_idx + 1) % gradient_accumulation_steps == 0:
+                        # Apply gradient clipping to scaled gradients
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                         scaler.step(optimizer)
                         scaler.update()
                         optimizer.zero_grad()
@@ -615,18 +654,27 @@ def train_model(model: nn.Module,
                     
                     # Gradient accumulation
                     if (batch_idx + 1) % gradient_accumulation_steps == 0:
+                        # Apply gradient clipping
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                         optimizer.step()
                         optimizer.zero_grad()
                 
                 # Calculate metrics
-                batch_size = len(batch.y)  # Number of graphs in the batch
+                batch_size = batch.num_graphs  # Number of graphs in the batch
                 total_loss += loss.item() * gradient_accumulation_steps * batch_size
                 rmse = compute_rmse(output, batch.y)
                 total_train_rmse += rmse.item() * batch_size
                 train_samples += batch_size
+                
+                # Update batch progress bar
+                batch_pbar.set_postfix({
+                    'loss': f"{loss.item() * gradient_accumulation_steps:.4f}",
+                    'rmse': f"{rmse.item():.4f}"
+                })
         else:
             # Non-batched training loop (one sample at a time)
-            for i, data_graph in enumerate(train_loader):
+            sample_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}", leave=False)
+            for data_graph in sample_pbar:
                 # Move data to device
                 data_graph = data_graph.to(device)
                 
@@ -634,17 +682,22 @@ def train_model(model: nn.Module,
                 optimizer.zero_grad()
                 
                 # Forward pass
-                with torch.amp.autocast('cuda') if mixed_precision and device.type == 'cuda' else contextlib.nullcontext():
+                with torch.amp.autocast(device_type='cuda') if mixed_precision and device.type == 'cuda' else contextlib.nullcontext():
                     output = model(data_graph)
                     loss = criterion(output, data_graph.y)
                 
                 # Backward pass
                 if mixed_precision and device.type == 'cuda':
                     scaler.scale(loss).backward()
+                    # Apply gradient clipping to scaled gradients
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                     scaler.step(optimizer)
                     scaler.update()
                 else:
                     loss.backward()
+                    # Apply gradient clipping
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
                     optimizer.step()
                 
                 # Calculate metrics
@@ -652,16 +705,27 @@ def train_model(model: nn.Module,
                 rmse = compute_rmse(output, data_graph.y)
                 total_train_rmse += rmse.item()
                 train_samples += 1
+                
+                # Update sample progress bar
+                sample_pbar.set_postfix({
+                    'loss': f"{loss.item():.4f}",
+                    'rmse': f"{rmse.item():.4f}"
+                })
         
         # Calculate average metrics for the epoch
         avg_train_loss = total_loss / max(train_samples, 1)
         avg_train_rmse = total_train_rmse / max(train_samples, 1)
         
-        # Log progress
-        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_train_loss:.4f}, RMSE: {avg_train_rmse:.4f}")
+        # Update epoch progress bar
+        epoch_pbar.set_postfix({
+            'loss': f"{avg_train_loss:.4f}",
+            'rmse': f"{avg_train_rmse:.4f}"
+        })
         
         # Evaluate on validation and test data at intervals
         if (epoch + 1) % eval_interval == 0:
+            print(f"\nEvaluating at epoch {epoch+1}...")
+            
             # Create epoch-specific CSV files for predictions
             y_test_file = open(os.path.join(log_dir, f'y_test_epoch_{epoch+1}.csv'), 'w', newline='')
             y_pred_file = open(os.path.join(log_dir, f'y_pred_epoch_{epoch+1}.csv'), 'w', newline='')
@@ -673,9 +737,11 @@ def train_model(model: nn.Module,
             y_pred_writer.writerow(['Sample_ID', 'y_pred'])
             
             # Evaluate on validation set
+            print("Evaluating on validation set...")
             val_loss, val_rmse = evaluate_model(model, val_loader, criterion, device, use_batching)
             
             # Evaluate on test set and log predictions
+            print("Evaluating on test set...")
             test_loss, test_rmse, test_predictions = evaluate_model_with_predictions(
                 model, test_loader, criterion, device, use_batching
             )
@@ -710,8 +776,10 @@ def train_model(model: nn.Module,
                 
                 # Save the best model
                 torch.save(model.state_dict(), os.path.join(log_dir, 'best_model.pt'))
+                print(f"New best model saved with validation RMSE: {best_val_rmse:.4f}")
             else:
                 patience_counter += 1
+                print(f"No improvement for {patience_counter} evaluations. Best RMSE: {best_val_rmse:.4f}")
                 
             if patience_counter >= early_stopping_patience:
                 print(f"Early stopping triggered after {epoch+1} epochs")
@@ -758,8 +826,8 @@ def main():
                        help='Number of output channels (prediction dimensions)')
     
     # Training parameters
-    parser.add_argument('--lr', type=float, default=0.00075,
-                       help='Learning rate for the optimizer')
+    parser.add_argument('--lr', type=float, default=0.0001,  # Try a smaller value
+                    help='Learning rate for the optimizer')
     parser.add_argument('--epochs', type=int, default=1250,
                        help='Number of epochs to train for')
     parser.add_argument('--eval_interval', type=int, default=50,
@@ -770,6 +838,8 @@ def main():
                        help='Ratio of data to use for training')
     parser.add_argument('--val_ratio', type=float, default=0.1,
                        help='Ratio of data to use for validation')
+    parser.add_argument('--grad_clip', type=float, default=1.0,
+                       help='Maximum norm for gradient clipping')
     
     # Output parameters
     parser.add_argument('--log_dir', type=str, default='logs',
@@ -799,7 +869,25 @@ def main():
     parser.add_argument('--verbose', action='store_true',
                        help='Print verbose output during processing')
     
+    # Disable tqdm if needed
+    parser.add_argument('--no_progress_bar', action='store_true',
+                       help='Disable progress bars (useful for non-interactive environments)')
+    
     args = parser.parse_args()
+    
+    # Disable tqdm if requested
+    if args.no_progress_bar:
+        # Replace tqdm with a simple passthrough function
+        global tqdm, trange
+        
+        def no_op_tqdm(iterable, **kwargs):
+            return iterable
+            
+        def no_op_trange(n, **kwargs):
+            return range(n)
+            
+        tqdm = no_op_tqdm
+        trange = no_op_trange
     
     # Set random seed for reproducibility
     torch.manual_seed(args.seed)
@@ -851,6 +939,7 @@ def main():
         return
     
     # Split data into train, validation, and test sets
+    print("Splitting dataset into train, validation, and test sets...")
     train_size = int(args.train_ratio * len(dataset))
     val_size = int(args.val_ratio * len(dataset))
     test_size = len(dataset) - train_size - val_size
@@ -864,9 +953,9 @@ def main():
         val_indices = indices[train_size:train_size + val_size]
         test_indices = indices[train_size + val_size:]
         
-        train_data = [dataset[i] for i in train_indices]
-        val_data = [dataset[i] for i in val_indices]
-        test_data = [dataset[i] for i in test_indices]
+        train_data = [dataset[i] for i in tqdm(train_indices, desc="Creating training set")]
+        val_data = [dataset[i] for i in tqdm(val_indices, desc="Creating validation set")]
+        test_data = [dataset[i] for i in tqdm(test_indices, desc="Creating test set")]
         
         print(f"Data split: {len(train_data)} training, {len(val_data)} validation, {len(test_data)} test")
     except Exception as e:
@@ -879,7 +968,7 @@ def main():
                hidden_channels=args.hidden_channels, 
                out_channels=args.out_channels)
     
-    optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
     criterion = nn.MSELoss()
     
     # Create log directory
@@ -893,20 +982,26 @@ def main():
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     else:
         device = torch.device(args.device)
+    
+    print(f"Using device: {device}")
 
     # Configure batching
     use_batching = args.batch_size > 0
 
     try:
         train_model(model, train_data, val_data, test_data, 
-                optimizer, criterion, args.epochs, device,  # Added device here
+                optimizer, criterion, args.epochs, device,
                 log_dir=args.log_dir, 
                 eval_interval=args.eval_interval,
                 use_batching=use_batching,
                 mixed_precision=args.mixed_precision,
-                gradient_accumulation_steps=args.gradient_accumulation)
+                gradient_accumulation_steps=args.gradient_accumulation,
+                early_stopping_patience=args.patience if args.early_stopping else float('inf'),
+                grad_clip=args.grad_clip)
     except Exception as e:
         print(f"Error during training: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return
     
     # Save the trained model
