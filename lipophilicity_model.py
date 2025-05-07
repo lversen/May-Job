@@ -13,14 +13,16 @@ import os
 import csv
 import argparse
 from typing import List, Tuple, Dict, Any, Optional
-
+import contextlib
 import pandas as pd
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch_geometric
+from torch_geometric.loader import DataLoader
+from torch_geometric.nn import GATConv, global_mean_pool
 from torch_geometric.data import Data, Dataset
-from torch_geometric.nn import GATConv
 from torch_geometric.utils import add_self_loops
 from sklearn.model_selection import train_test_split
 
@@ -285,7 +287,7 @@ class GSR(nn.Module):
             data: Graph data object containing node features and edge indices
             
         Returns:
-            Node feature tensor after message passing
+            Graph-level prediction after pooling node features
         """
         x, edge_index = data.x, data.edge_index
         edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))
@@ -296,6 +298,14 @@ class GSR(nn.Module):
         x = torch.tanh(self.conv3(x, edge_index))
         x = torch.tanh(self.conv4(x, edge_index))
         x = self.conv5(x, edge_index)  # No activation on final layer
+        
+        # Add global mean pooling to get a single prediction per graph
+        if hasattr(data, 'batch'):
+            # Batched input
+            x = global_mean_pool(x, data.batch)
+        else:
+            # Single graph - compute mean of all node features
+            x = torch.mean(x, dim=0, keepdim=True)
         
         return x
 
@@ -407,19 +417,7 @@ def evaluate_model(model: nn.Module,
                 criterion: nn.Module,
                 device: torch.device,
                 use_batching: bool = False) -> Tuple[float, float]:
-    """
-    Evaluate the model on a dataset.
-    
-    Args:
-        model: The model to evaluate
-        data_loader: Data to evaluate on (either a list of Data objects or a DataLoader)
-        criterion: Loss function
-        device: Device to use for evaluation
-        use_batching: Whether the data_loader uses batching
-        
-    Returns:
-        Tuple of (average loss, average RMSE)
-    """
+    """Evaluate the model on a dataset."""
     model.eval()
     total_loss = 0
     total_rmse = 0
@@ -437,10 +435,11 @@ def evaluate_model(model: nn.Module,
                 loss = criterion(output, batch.y)
                 
                 # Calculate metrics
-                total_loss += loss.item() * batch.num_graphs
+                batch_size = len(batch.y)  # Number of graphs in the batch
+                total_loss += loss.item() * batch_size
                 rmse = compute_rmse(output, batch.y)
-                total_rmse += rmse.item() * batch.num_graphs
-                total_samples += batch.num_graphs
+                total_rmse += rmse.item() * batch_size
+                total_samples += batch_size
         else:
             # Non-batched evaluation
             for data_graph in data_loader:
@@ -458,8 +457,8 @@ def evaluate_model(model: nn.Module,
                 total_samples += 1
     
     # Calculate averages
-    avg_loss = total_loss / total_samples
-    avg_rmse = total_rmse / total_samples
+    avg_loss = total_loss / max(total_samples, 1)
+    avg_rmse = total_rmse / max(total_samples, 1)
     
     return avg_loss, avg_rmse
 
@@ -551,22 +550,6 @@ def train_model(model: nn.Module,
                 early_stopping_patience: int = 20):
     """
     Train the model and evaluate at intervals.
-    
-    Args:
-        model: The model to train
-        train_loader: Training data (either a list of Data objects or a DataLoader)
-        val_loader: Validation data (either a list of Data objects or a DataLoader)
-        test_loader: Test data (either a list of Data objects or a DataLoader)
-        optimizer: Optimizer
-        criterion: Loss function
-        num_epochs: Number of epochs to train for
-        device: Device to use for training (CPU or GPU)
-        log_dir: Directory to save logs
-        eval_interval: Interval (in epochs) to evaluate and log metrics
-        use_batching: Whether to use batching for training
-        mixed_precision: Whether to use mixed precision training (only for GPU)
-        gradient_accumulation_steps: Number of steps to accumulate gradients
-        early_stopping_patience: Number of evaluation intervals without improvement before stopping
     """
     # Create directory for logs if it doesn't exist
     os.makedirs(log_dir, exist_ok=True)
@@ -578,11 +561,18 @@ def train_model(model: nn.Module,
                             'Val_Loss', 'Val_RMSE', 
                             'Test_Loss', 'Test_RMSE'])
     
+    # Set up proper data loaders if using batching
+    if use_batching:
+        batch_size = 32  # Default batch size
+        train_loader = DataLoader(train_loader, batch_size=batch_size, shuffle=True)
+        val_loader = DataLoader(val_loader, batch_size=batch_size)
+        test_loader = DataLoader(test_loader, batch_size=batch_size)
+    
     # Move model to the selected device
     model = model.to(device)
     
     # Set up mixed precision training if requested (only for GPU)
-    scaler = torch.cuda.amp.GradScaler() if mixed_precision and device.type == 'cuda' else None
+    scaler = torch.amp.GradScaler('cuda') if mixed_precision and device.type == 'cuda' else None
     
     # Early stopping variables
     best_val_rmse = float('inf')
@@ -607,7 +597,7 @@ def train_model(model: nn.Module,
                 batch = batch.to(device)
                 
                 # Mixed precision context if enabled
-                with torch.cuda.amp.autocast() if mixed_precision and device.type == 'cuda' else contextlib.nullcontext():
+                with torch.amp.autocast('cuda') if mixed_precision and device.type == 'cuda' else contextlib.nullcontext():
                     output = model(batch)
                     loss = criterion(output, batch.y) / gradient_accumulation_steps
                 
@@ -628,11 +618,12 @@ def train_model(model: nn.Module,
                         optimizer.step()
                         optimizer.zero_grad()
                 
-                # Calculate metrics (non-reduced loss)
-                total_loss += loss.item() * gradient_accumulation_steps * batch.num_graphs
+                # Calculate metrics
+                batch_size = len(batch.y)  # Number of graphs in the batch
+                total_loss += loss.item() * gradient_accumulation_steps * batch_size
                 rmse = compute_rmse(output, batch.y)
-                total_train_rmse += rmse.item() * batch.num_graphs
-                train_samples += batch.num_graphs
+                total_train_rmse += rmse.item() * batch_size
+                train_samples += batch_size
         else:
             # Non-batched training loop (one sample at a time)
             for i, data_graph in enumerate(train_loader):
@@ -643,7 +634,7 @@ def train_model(model: nn.Module,
                 optimizer.zero_grad()
                 
                 # Forward pass
-                with torch.cuda.amp.autocast() if mixed_precision and device.type == 'cuda' else contextlib.nullcontext():
+                with torch.amp.autocast('cuda') if mixed_precision and device.type == 'cuda' else contextlib.nullcontext():
                     output = model(data_graph)
                     loss = criterion(output, data_graph.y)
                 
@@ -663,8 +654,8 @@ def train_model(model: nn.Module,
                 train_samples += 1
         
         # Calculate average metrics for the epoch
-        avg_train_loss = total_loss / train_samples
-        avg_train_rmse = total_train_rmse / train_samples
+        avg_train_loss = total_loss / max(train_samples, 1)
+        avg_train_rmse = total_train_rmse / max(train_samples, 1)
         
         # Log progress
         print(f"Epoch {epoch+1}/{num_epochs}, Loss: {avg_train_loss:.4f}, RMSE: {avg_train_rmse:.4f}")
@@ -896,10 +887,24 @@ def main():
     
     # Train the model
     print(f"Starting training for {args.epochs} epochs...")
+
+    # Determine the device
+    if args.device == 'auto':
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    else:
+        device = torch.device(args.device)
+
+    # Configure batching
+    use_batching = args.batch_size > 0
+
     try:
         train_model(model, train_data, val_data, test_data, 
-                   optimizer, criterion, args.epochs, 
-                   log_dir=args.log_dir, eval_interval=args.eval_interval)
+                optimizer, criterion, args.epochs, device,  # Added device here
+                log_dir=args.log_dir, 
+                eval_interval=args.eval_interval,
+                use_batching=use_batching,
+                mixed_precision=args.mixed_precision,
+                gradient_accumulation_steps=args.gradient_accumulation)
     except Exception as e:
         print(f"Error during training: {str(e)}")
         return
