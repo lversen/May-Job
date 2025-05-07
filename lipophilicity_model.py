@@ -967,7 +967,7 @@ def main():
                hidden_channels=args.hidden_channels, 
                out_channels=args.out_channels)
     
-    optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
     criterion = nn.MSELoss()
     
     # Create log directory
