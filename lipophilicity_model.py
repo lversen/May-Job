@@ -19,7 +19,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 import torch_geometric
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import GATConv, global_mean_pool
@@ -826,8 +825,8 @@ def main():
                        help='Number of output channels (prediction dimensions)')
     
     # Training parameters
-    parser.add_argument('--lr', type=float, default=0.0001,  # Try a smaller value
-                    help='Learning rate for the optimizer')
+    parser.add_argument('--lr', type=float, default=0.00075,
+                       help='Learning rate for the optimizer')
     parser.add_argument('--epochs', type=int, default=1250,
                        help='Number of epochs to train for')
     parser.add_argument('--eval_interval', type=int, default=50,
@@ -968,7 +967,7 @@ def main():
                hidden_channels=args.hidden_channels, 
                out_channels=args.out_channels)
     
-    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-5)
+    optimizer = optim.RMSprop(model.parameters(), lr=args.lr)
     criterion = nn.MSELoss()
     
     # Create log directory
