@@ -1,3 +1,4 @@
+# Fix for visualization/visualize.py
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -13,8 +14,13 @@ def visualize_results(log_dir, results_dir, epoch=None):
     - results_dir: Directory to save visualization results
     - epoch: Optional specific epoch to visualize
     """
-    # Load metrics
-    metrics_df = pd.read_csv(os.path.join(log_dir, 'training_metrics.csv'))
+    # Load metrics - change file name from 'training_metrics.csv' to 'metrics.csv'
+    metrics_file = os.path.join(log_dir, 'metrics.csv')
+    if not os.path.exists(metrics_file):
+        # Fall back to old name if file doesn't exist
+        metrics_file = os.path.join(log_dir, 'training_metrics.csv')
+    
+    metrics_df = pd.read_csv(metrics_file)
     
     # Create results directory
     os.makedirs(results_dir, exist_ok=True)

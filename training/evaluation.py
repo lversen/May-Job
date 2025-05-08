@@ -1,6 +1,7 @@
 import torch
 import pandas as pd
 import os
+import csv  # Add this import for CSV writer
 
 def compute_rmse(predictions, targets):
     """
@@ -71,7 +72,7 @@ def log_to_csv(epoch, train_loss, train_rmse, val_loss, val_rmse, test_loss, tes
               train_predictions, train_targets, val_predictions, val_targets, 
               test_predictions, test_targets, smiles_list, log_dir):
     """
-    Log training results to CSV files.
+    Log training results to CSV files similar to the stable version.
     
     Parameters:
     - epoch: Current epoch
@@ -86,7 +87,26 @@ def log_to_csv(epoch, train_loss, train_rmse, val_loss, val_rmse, test_loss, tes
     epoch_dir = os.path.join(log_dir, f'epoch_{epoch}')
     os.makedirs(epoch_dir, exist_ok=True)
     
-    # Log metrics
+    # Save metrics in both formats for compatibility
+    
+    # 1. Save to metrics.csv using CSV writer (stable version style)
+    metrics_file_path = os.path.join(log_dir, 'metrics.csv')
+    file_exists = os.path.exists(metrics_file_path)
+    
+    with open(metrics_file_path, 'a', newline='') as metrics_file:
+        metrics_writer = csv.writer(metrics_file)
+        
+        # Write headers if file doesn't exist
+        if not file_exists:
+            metrics_writer.writerow(['Epoch', 'Train_Loss', 'Train_RMSE', 'Val_Loss', 'Val_RMSE', 'Test_Loss', 'Test_RMSE'])
+        
+        # Write metrics row
+        metrics_writer.writerow([epoch, train_loss, train_rmse, val_loss, val_rmse, test_loss, test_rmse])
+        
+        # Ensure data is written to file
+        metrics_file.flush()
+    
+    # 2. ALSO save to training_metrics.csv using pandas for backward compatibility
     metrics_df = pd.DataFrame({
         'Epoch': [epoch],
         'Train_Loss': [train_loss],
@@ -97,14 +117,35 @@ def log_to_csv(epoch, train_loss, train_rmse, val_loss, val_rmse, test_loss, tes
         'Test_RMSE': [test_rmse]
     })
     
-    metrics_file = os.path.join(log_dir, 'training_metrics.csv')
+    training_metrics_file = os.path.join(log_dir, 'training_metrics.csv')
     
-    if os.path.exists(metrics_file):
-        metrics_df.to_csv(metrics_file, mode='a', header=False, index=False)
+    if os.path.exists(training_metrics_file):
+        metrics_df.to_csv(training_metrics_file, mode='a', header=False, index=False)
     else:
-        metrics_df.to_csv(metrics_file, mode='w', header=True, index=False)
+        metrics_df.to_csv(training_metrics_file, mode='w', header=True, index=False)
     
-    # Log predictions for train set
+    # Create separate CSV files for y_test and y_pred (stable version style)
+    y_test_file = open(os.path.join(epoch_dir, f'y_test_epoch_{epoch}.csv'), 'w', newline='')
+    y_pred_file = open(os.path.join(epoch_dir, f'y_pred_epoch_{epoch}.csv'), 'w', newline='')
+    
+    y_test_writer = csv.writer(y_test_file)
+    y_pred_writer = csv.writer(y_pred_file)
+    
+    # Write headers
+    y_test_writer.writerow(['Sample_ID', 'y_test'])
+    y_pred_writer.writerow(['Sample_ID', 'y_pred'])
+    
+    # Write test predictions to CSV files
+    for i, (y_t, y_p) in enumerate(zip(test_targets, test_predictions)):
+        sample_id = f'test_{i}'
+        y_test_writer.writerow([sample_id, y_t[0]])
+        y_pred_writer.writerow([sample_id, y_p[0]])
+    
+    # Close the y_test and y_pred files
+    y_test_file.close()
+    y_pred_file.close()
+    
+    # Also log predictions for train, val, and test sets as before
     train_indices = list(range(len(train_targets)))
     train_results_df = pd.DataFrame({
         'Index': train_indices,
@@ -115,7 +156,6 @@ def log_to_csv(epoch, train_loss, train_rmse, val_loss, val_rmse, test_loss, tes
     })
     train_results_df.to_csv(os.path.join(epoch_dir, 'train_predictions.csv'), index=False)
     
-    # Log predictions for validation set
     val_indices = list(range(len(train_targets), len(train_targets) + len(val_targets)))
     val_results_df = pd.DataFrame({
         'Index': val_indices,
@@ -126,7 +166,6 @@ def log_to_csv(epoch, train_loss, train_rmse, val_loss, val_rmse, test_loss, tes
     })
     val_results_df.to_csv(os.path.join(epoch_dir, 'val_predictions.csv'), index=False)
     
-    # Log predictions for test set
     test_indices = list(range(len(train_targets) + len(val_targets), len(smiles_list)))
     test_results_df = pd.DataFrame({
         'Index': test_indices,

@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from datetime import datetime
 from torch_geometric.loader import DataLoader
-import numpy as np
+import numpy as np 
 
 from .evaluation import evaluate_model_with_nodes, log_to_csv, log_node_predictions_to_csv
 from visualization.visualize import visualize_results
@@ -23,26 +23,9 @@ def train_lipophilicity_model(data_list, smiles_list,
                              dropout=0.2,
                              base_dir=""):
     """
-    Train a lipophilicity prediction model.
+    Train a lipophilicity prediction model with logging similar to the stable version.
     
-    Parameters:
-    - data_list: List of PyTorch Geometric Data objects
-    - smiles_list: List of SMILES strings
-    - epochs: Maximum number of training epochs
-    - batch_size: Batch size
-    - lr: Learning rate
-    - feature_dim: Dimension of input features
-    - hidden_dim: Dimension of hidden layers
-    - early_stopping_patience: Number of epochs to wait before early stopping
-    - heads: Number of attention heads in GAT
-    - dropout: Dropout probability
-    - base_dir: Base directory for outputs (optional)
-    
-    Returns:
-    - model: Trained GSR model
-    - log_dir: Directory containing training logs
-    - results_dir: Directory containing results
-    - checkpoints_dir: Directory containing model checkpoints
+    Parameters remain the same as in the original function.
     """
     # Set seeds for reproducibility
     seed = 42
@@ -144,10 +127,13 @@ def train_lipophilicity_model(data_list, smiles_list,
             
             train_loss += loss.item() * batch.num_graphs
             train_rmse += batch_rmse.item() * batch.num_graphs
-            
+        
         # Calculate average training metrics
         avg_train_loss = train_loss / len(train_loader.dataset)
         avg_train_rmse = train_rmse / len(train_loader.dataset)
+        
+        # Print basic epoch progress (similar to stable version)
+        print(epoch, train_loss, train_rmse)
         
         # Evaluate on validation set
         val_loss, val_rmse, val_graph_preds, _, _, _ = evaluate_model_with_nodes(model, val_loader, criterion, device)
@@ -169,26 +155,51 @@ def train_lipophilicity_model(data_list, smiles_list,
                 print(f"Early stopping triggered after {epoch} epochs")
                 break
         
-        # Calculate elapsed time for the epoch
-        epoch_time = time.time() - epoch_start_time
-        
-        # Print progress
-        if epoch % 10 == 0 or epoch == 1:
-            # Evaluate on test set
-            test_loss, test_rmse, test_graph_preds, _, _, _ = evaluate_model_with_nodes(model, test_loader, criterion, device)
-            
-            print(f"Epoch {epoch}/{epochs} | Time: {epoch_time:.2f}s")
-            print(f"  Train Loss: {avg_train_loss:.4f} | Train RMSE: {avg_train_rmse:.4f}")
-            print(f"  Val Loss: {val_loss:.4f} | Val RMSE: {val_rmse:.4f}")
-            print(f"  Test Loss: {test_loss:.4f} | Test RMSE: {test_rmse:.4f}")
-            print(f"  Best Val Loss: {best_val_loss:.4f} (Epoch {best_epoch})")
-            print(f"  Learning Rate: {optimizer.param_groups[0]['lr']:.6f}")
+        # Log detailed metrics every 50 epochs (to match stable version)
+        if epoch % 50 == 0:
+            model.eval()
             
             # Create epoch directory
             epoch_dir = os.path.join(log_dir, f'epoch_{epoch}')
             os.makedirs(epoch_dir, exist_ok=True)
             
-            # Get predictions for all datasets including node predictions
+            # Get predictions for all datasets
+            with torch.no_grad():
+                # Testing
+                test_loss = 0
+                total_test_rmse = 0
+                all_test_preds = []
+                all_test_targets = []
+                
+                for i, data_batch in enumerate(test_loader):
+                    data_batch = data_batch.to(device)
+                    _, y_pred = model(data_batch)
+                    batch_test_loss = criterion(y_pred, data_batch.y)
+                    test_loss += batch_test_loss.item() * data_batch.num_graphs
+                    
+                    # Calculate RMSE for test
+                    test_rmse = compute_rmse(y_pred, data_batch.y)
+                    total_test_rmse += test_rmse.item() * data_batch.num_graphs
+                    
+                    # Print RMSE and loss for each element in the test set (like stable version)
+                    for j in range(data_batch.num_graphs):
+                        sample_test_pred = y_pred[j].cpu().numpy()
+                        sample_test_target = data_batch.y[j].cpu().numpy()
+                        all_test_preds.append(sample_test_pred)
+                        all_test_targets.append(sample_test_target)
+                        
+                        # Calculate individual test loss and RMSE for this sample
+                        ind_test_loss = ((sample_test_pred - sample_test_target) ** 2).mean()
+                        ind_test_rmse = np.sqrt(ind_test_loss)
+                        
+                        print(f"element {i*batch_size+j}, Epoch {epoch}: Test Loss: {ind_test_loss:.4f}")
+                        print(f"element {i*batch_size+j}, Epoch {epoch}: Test RMSE: {ind_test_rmse:.4f}")
+                        print(f'y_test: {sample_test_target.tolist()}, y_pred: {sample_test_pred.tolist()}')
+                
+                avg_test_loss = test_loss / len(test_loader.dataset)
+                avg_test_rmse = total_test_rmse / len(test_loader.dataset)
+            
+            # Get full dataset predictions for logging and visualization
             _, _, train_graph_preds, train_node_preds, train_node_batch, train_targets = evaluate_model_with_nodes(
                 model, DataLoader(train_data, batch_size=batch_size), criterion, device
             )
@@ -201,7 +212,7 @@ def train_lipophilicity_model(data_list, smiles_list,
             
             # Log graph-level results to CSV
             log_to_csv(
-                epoch, avg_train_loss, avg_train_rmse, val_loss, val_rmse, test_loss, test_rmse,
+                epoch, avg_train_loss, avg_train_rmse, val_loss, val_rmse, avg_test_loss, avg_test_rmse,
                 train_graph_preds, train_targets, val_graph_preds, val_targets,
                 test_graph_preds, test_targets, smiles_list, log_dir
             )
