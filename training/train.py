@@ -20,7 +20,8 @@ def train_lipophilicity_model(data_list, smiles_list,
                              hidden_dim=64, 
                              early_stopping_patience=100,
                              heads=4,
-                             dropout=0.2):
+                             dropout=0.2,
+                             base_dir=""):
     """
     Train a lipophilicity prediction model.
     
@@ -35,6 +36,7 @@ def train_lipophilicity_model(data_list, smiles_list,
     - early_stopping_patience: Number of epochs to wait before early stopping
     - heads: Number of attention heads in GAT
     - dropout: Dropout probability
+    - base_dir: Base directory for outputs (optional)
     
     Returns:
     - model: Trained GSR model
@@ -59,9 +61,20 @@ def train_lipophilicity_model(data_list, smiles_list,
     
     # Create directories for logs and results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_dir = f'logs_{timestamp}'
-    results_dir = f'results_{timestamp}'
-    checkpoints_dir = f'checkpoints_{timestamp}'
+    
+    # Create parent directories if they don't exist
+    logs_parent = os.path.join(base_dir, "logs")
+    results_parent = os.path.join(base_dir, "results")
+    checkpoints_parent = os.path.join(base_dir, "checkpoints")
+    
+    os.makedirs(logs_parent, exist_ok=True)
+    os.makedirs(results_parent, exist_ok=True)
+    os.makedirs(checkpoints_parent, exist_ok=True)
+    
+    # Create timestamped subdirectories
+    log_dir = os.path.join(logs_parent, f'logs_{timestamp}')
+    results_dir = os.path.join(results_parent, f'results_{timestamp}')
+    checkpoints_dir = os.path.join(checkpoints_parent, f'checkpoints_{timestamp}')
     
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(results_dir, exist_ok=True)

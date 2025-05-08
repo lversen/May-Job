@@ -58,7 +58,7 @@ def parse_args():
                       help='Random seed for reproducibility')
     
     # Output parameters
-    parser.add_argument('--output_dir', type=str, default='results',
+    parser.add_argument('--output_dir', type=str, default='output',
                       help='Base directory for outputs')
     
     return parser.parse_args()
@@ -77,12 +77,12 @@ def main():
     # Start timing
     start_time = time.time()
     
-    # Set up output directories with timestamp
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_base = f"{args.output_dir}_{timestamp}"
+    # Set up output directory
+    output_dir = args.output_dir
+    os.makedirs(output_dir, exist_ok=True)
     
     print("=" * 50)
-    print(f"Lipophilicity Prediction - Starting at {timestamp}")
+    print(f"Lipophilicity Prediction - Starting at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 50)
     print("\nLoading data...")
     
@@ -129,7 +129,8 @@ def main():
         hidden_dim=args.hidden_dim,
         early_stopping_patience=args.early_stopping,
         heads=args.heads,
-        dropout=args.dropout
+        dropout=args.dropout,
+        base_dir=output_dir  # Pass the base directory to the training function
     )
     
     # Create animated GIFs from the training visualizations
