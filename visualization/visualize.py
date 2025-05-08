@@ -17,10 +17,9 @@ def visualize_results(log_dir, results_dir, epoch=None):
     """
     print(f"Creating visualizations in {results_dir}")
     
-    # Load metrics - change file name from 'training_metrics.csv' to 'metrics.csv'
+    # Load metrics
     metrics_file = os.path.join(log_dir, 'metrics.csv')
     if not os.path.exists(metrics_file):
-        # Fall back to old name if file doesn't exist
         metrics_file = os.path.join(log_dir, 'training_metrics.csv')
     
     metrics_df = pd.read_csv(metrics_file)
@@ -28,10 +27,8 @@ def visualize_results(log_dir, results_dir, epoch=None):
     # Create results directory
     os.makedirs(results_dir, exist_ok=True)
     
-    # Create a visualization progress bar
+    # Create visualization progress bar
     viz_steps = 2  # Base steps (loss and RMSE curves)
-    if epoch is not None:
-        viz_steps += 3  # Add steps for epoch-specific visualizations
     
     viz_pbar = tqdm(total=viz_steps, desc="Creating visualizations", leave=False)
     
@@ -67,51 +64,72 @@ def visualize_results(log_dir, results_dir, epoch=None):
     if epoch is not None:
         epoch_dir = os.path.join(log_dir, f'epoch_{epoch}')
         
-        # Load prediction data
-        train_df = pd.read_csv(os.path.join(epoch_dir, 'train_predictions.csv'))
-        val_df = pd.read_csv(os.path.join(epoch_dir, 'val_predictions.csv'))
-        test_df = pd.read_csv(os.path.join(epoch_dir, 'test_predictions.csv'))
+        # Check if prediction files exist for this epoch
+        train_pred_file = os.path.join(epoch_dir, 'train_predictions.csv')
+        val_pred_file = os.path.join(epoch_dir, 'val_predictions.csv')
+        test_pred_file = os.path.join(epoch_dir, 'test_predictions.csv')
         
-        # Combined scatter plot
-        plt.figure(figsize=(12, 10))
-        plt.scatter(train_df['Actual'], train_df['Predicted'], alpha=0.6, label='Train', color='blue')
-        plt.scatter(val_df['Actual'], val_df['Predicted'], alpha=0.6, label='Validation', color='green')
-        plt.scatter(test_df['Actual'], test_df['Predicted'], alpha=0.6, label='Test', color='red')
-        
-        # Add perfect prediction line
-        min_val = min(train_df['Actual'].min(), val_df['Actual'].min(), test_df['Actual'].min())
-        max_val = max(train_df['Actual'].max(), val_df['Actual'].max(), test_df['Actual'].max())
-        plt.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.5)
-        
-        plt.xlabel('Actual')
-        plt.ylabel('Predicted')
-        plt.title(f'Predicted vs Actual Values (Epoch {epoch})')
-        plt.legend()
-        plt.grid(True)
-        plt.savefig(os.path.join(results_dir, f'predictions_epoch_{epoch}.png'), dpi=300, bbox_inches='tight')
-        plt.close()
-        viz_pbar.update(1)
-        
-        # Error histogram
-        plt.figure(figsize=(12, 8))
-        combined_errors = pd.concat([
-            train_df[['Error']].assign(Dataset='Train'),
-            val_df[['Error']].assign(Dataset='Validation'),
-            test_df[['Error']].assign(Dataset='Test')
-        ])
-        
-        sns.histplot(data=combined_errors, x='Error', hue='Dataset', bins=30, alpha=0.6)
-        plt.title(f'Error Distribution (Epoch {epoch})')
-        plt.xlabel('Absolute Error')
-        plt.ylabel('Count')
-        plt.grid(True)
-        plt.savefig(os.path.join(results_dir, f'error_histogram_epoch_{epoch}.png'), dpi=300, bbox_inches='tight')
-        plt.close()
-        viz_pbar.update(1)
-        
-        # Visualize node predictions
-        visualize_node_predictions(log_dir, results_dir, epoch)
-        viz_pbar.update(1)
+        if os.path.exists(train_pred_file) and os.path.exists(val_pred_file) and os.path.exists(test_pred_file):
+            viz_pbar.total += 3  # Add steps for epoch-specific visualizations
+            viz_pbar.refresh()
+            
+            # Load prediction data
+            train_df = pd.read_csv(train_pred_file)
+            val_df = pd.read_csv(val_pred_file)
+            test_df = pd.read_csv(test_pred_file)
+            
+            # Visualization code continues as before...
+            # Combined scatter plot
+            plt.figure(figsize=(12, 10))
+            plt.scatter(train_df['Actual'], train_df['Predicted'], alpha=0.6, label='Train', color='blue')
+            plt.scatter(val_df['Actual'], val_df['Predicted'], alpha=0.6, label='Validation', color='green')
+            plt.scatter(test_df['Actual'], test_df['Predicted'], alpha=0.6, label='Test', color='red')
+            
+            # Add perfect prediction line
+            min_val = min(train_df['Actual'].min(), val_df['Actual'].min(), test_df['Actual'].min())
+            max_val = max(train_df['Actual'].max(), val_df['Actual'].max(), test_df['Actual'].max())
+            plt.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.5)
+            
+            plt.xlabel('Actual')
+            plt.ylabel('Predicted')
+            plt.title(f'Predicted vs Actual Values (Epoch {epoch})')
+            plt.legend()
+            plt.grid(True)
+            plt.savefig(os.path.join(results_dir, f'predictions_epoch_{epoch}.png'), dpi=300, bbox_inches='tight')
+            plt.close()
+            viz_pbar.update(1)
+            
+            # Error histogram
+            plt.figure(figsize=(12, 8))
+            combined_errors = pd.concat([
+                train_df[['Error']].assign(Dataset='Train'),
+                val_df[['Error']].assign(Dataset='Validation'),
+                test_df[['Error']].assign(Dataset='Test')
+            ])
+            
+            sns.histplot(data=combined_errors, x='Error', hue='Dataset', bins=30, alpha=0.6)
+            plt.title(f'Error Distribution (Epoch {epoch})')
+            plt.xlabel('Absolute Error')
+            plt.ylabel('Count')
+            plt.grid(True)
+            plt.savefig(os.path.join(results_dir, f'error_histogram_epoch_{epoch}.png'), dpi=300, bbox_inches='tight')
+            plt.close()
+            viz_pbar.update(1)
+            
+            # Visualize node predictions if files exist
+            node_pred_files_exist = all([
+                os.path.exists(os.path.join(epoch_dir, f'{dataset}_node_predictions.csv')) 
+                for dataset in ['train', 'val', 'test']
+            ])
+            
+            if node_pred_files_exist:
+                visualize_node_predictions(log_dir, results_dir, epoch)
+                viz_pbar.update(1)
+            else:
+                print(f"Skipping node prediction visualization for epoch {epoch} as files are missing")
+        else:
+            print(f"Skipping detailed visualizations for epoch {epoch} as prediction files are missing")
+            print(f"Consider setting logging interval to include this epoch or using the nearest epoch multiple of 50")
     
     viz_pbar.close()
     print(f"Visualizations saved to {results_dir}")
