@@ -2,6 +2,7 @@ import torch
 import pandas as pd
 import os
 import csv  # Add this import for CSV writer
+from tqdm import tqdm  # Import tqdm
 
 def compute_rmse(predictions, targets):
     """
@@ -46,7 +47,8 @@ def evaluate_model_with_nodes(model, data_loader, criterion, device):
     all_targets = []
     
     with torch.no_grad():
-        for batch in data_loader:
+        # Add progress bar for evaluation
+        for batch in tqdm(data_loader, desc="Evaluating", leave=False):
             batch = batch.to(device)
             node_outputs, graph_outputs = model(batch)
             targets = batch.y
@@ -199,7 +201,14 @@ def log_node_predictions_to_csv(node_predictions, node_batch_indices, targets, s
     
     # For each node, record its molecule index, prediction, and the molecule's target value
     rows = []
-    for node_idx, (pred, batch_idx) in enumerate(zip(node_predictions, node_batch_indices)):
+    
+    # Use tqdm for progress visualization
+    for node_idx, (pred, batch_idx) in enumerate(tqdm(
+        zip(node_predictions, node_batch_indices), 
+        total=len(node_predictions),
+        desc=f"Processing {dataset_name} node predictions",
+        leave=False
+    )):
         mol_idx = batch_to_mol_idx[batch_idx]
         if mol_idx < len(indices):
             orig_mol_idx = indices[mol_idx]

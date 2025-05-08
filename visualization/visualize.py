@@ -3,6 +3,7 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+from tqdm import tqdm
 
 
 def visualize_results(log_dir, results_dir, epoch=None):
@@ -14,6 +15,8 @@ def visualize_results(log_dir, results_dir, epoch=None):
     - results_dir: Directory to save visualization results
     - epoch: Optional specific epoch to visualize
     """
+    print(f"Creating visualizations in {results_dir}")
+    
     # Load metrics - change file name from 'training_metrics.csv' to 'metrics.csv'
     metrics_file = os.path.join(log_dir, 'metrics.csv')
     if not os.path.exists(metrics_file):
@@ -24,6 +27,13 @@ def visualize_results(log_dir, results_dir, epoch=None):
     
     # Create results directory
     os.makedirs(results_dir, exist_ok=True)
+    
+    # Create a visualization progress bar
+    viz_steps = 2  # Base steps (loss and RMSE curves)
+    if epoch is not None:
+        viz_steps += 3  # Add steps for epoch-specific visualizations
+    
+    viz_pbar = tqdm(total=viz_steps, desc="Creating visualizations", leave=False)
     
     # Plot loss curves
     plt.figure(figsize=(12, 8))
@@ -37,6 +47,7 @@ def visualize_results(log_dir, results_dir, epoch=None):
     plt.grid(True)
     plt.savefig(os.path.join(results_dir, 'loss_curves.png'), dpi=300, bbox_inches='tight')
     plt.close()
+    viz_pbar.update(1)
     
     # Plot RMSE curves
     plt.figure(figsize=(12, 8))
@@ -50,6 +61,7 @@ def visualize_results(log_dir, results_dir, epoch=None):
     plt.grid(True)
     plt.savefig(os.path.join(results_dir, 'rmse_curves.png'), dpi=300, bbox_inches='tight')
     plt.close()
+    viz_pbar.update(1)
     
     # If a specific epoch is provided, visualize predictions for that epoch
     if epoch is not None:
@@ -78,6 +90,7 @@ def visualize_results(log_dir, results_dir, epoch=None):
         plt.grid(True)
         plt.savefig(os.path.join(results_dir, f'predictions_epoch_{epoch}.png'), dpi=300, bbox_inches='tight')
         plt.close()
+        viz_pbar.update(1)
         
         # Error histogram
         plt.figure(figsize=(12, 8))
@@ -94,9 +107,14 @@ def visualize_results(log_dir, results_dir, epoch=None):
         plt.grid(True)
         plt.savefig(os.path.join(results_dir, f'error_histogram_epoch_{epoch}.png'), dpi=300, bbox_inches='tight')
         plt.close()
+        viz_pbar.update(1)
         
         # Visualize node predictions
         visualize_node_predictions(log_dir, results_dir, epoch)
+        viz_pbar.update(1)
+    
+    viz_pbar.close()
+    print(f"Visualizations saved to {results_dir}")
 
 
 def visualize_node_predictions(log_dir, results_dir, epoch):
@@ -117,6 +135,9 @@ def visualize_node_predictions(log_dir, results_dir, epoch):
     
     if not (os.path.exists(train_node_file) and os.path.exists(val_node_file) and os.path.exists(test_node_file)):
         return
+    
+    # Create a progress bar for node visualization
+    node_viz_pbar = tqdm(total=3, desc="Creating node visualizations", leave=False)
     
     # Load node predictions
     train_nodes = pd.read_csv(train_node_file)
@@ -144,6 +165,7 @@ def visualize_node_predictions(log_dir, results_dir, epoch):
     plt.grid(True)
     plt.savefig(os.path.join(node_viz_dir, f'node_prediction_distribution_epoch_{epoch}.png'), dpi=300, bbox_inches='tight')
     plt.close()
+    node_viz_pbar.update(1)
     
     # Node predictions vs molecule targets
     plt.figure(figsize=(12, 8))
@@ -164,6 +186,7 @@ def visualize_node_predictions(log_dir, results_dir, epoch):
     plt.grid(True)
     plt.savefig(os.path.join(node_viz_dir, f'node_vs_target_epoch_{epoch}.png'), dpi=300, bbox_inches='tight')
     plt.close()
+    node_viz_pbar.update(1)
     
     # Node predictions by molecule index
     plt.figure(figsize=(12, 8))
@@ -185,3 +208,6 @@ def visualize_node_predictions(log_dir, results_dir, epoch):
     plt.grid(True)
     plt.savefig(os.path.join(node_viz_dir, f'prediction_vs_target_by_molecule_epoch_{epoch}.png'), dpi=300, bbox_inches='tight')
     plt.close()
+    node_viz_pbar.update(1)
+    
+    node_viz_pbar.close()

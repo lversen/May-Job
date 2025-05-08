@@ -3,6 +3,7 @@ import glob
 import re
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+from tqdm import tqdm
 
 
 def create_training_gifs(results_dir):
@@ -21,15 +22,17 @@ def create_training_gifs(results_dir):
         import re
         import numpy as np
         from PIL import Image, ImageDraw, ImageFont
+        from tqdm import tqdm
     except ImportError:
         print("Installing required packages...")
         import subprocess
-        subprocess.check_call(["pip", "install", "pillow", "numpy"])
+        subprocess.check_call(["pip", "install", "pillow", "numpy", "tqdm"])
         import os
         import glob
         import re
         import numpy as np
         from PIL import Image, ImageDraw, ImageFont
+        from tqdm import tqdm
     
     # Create output directory for GIFs
     gif_dir = os.path.join(results_dir, 'gifs')
@@ -44,7 +47,8 @@ def create_training_gifs(results_dir):
     # Group files by visualization type
     visualization_groups = {}
     
-    for file_path in all_png_files:
+    # Use tqdm to show progress while processing files
+    for file_path in tqdm(all_png_files, desc="Grouping image files"):
         file_name = os.path.basename(file_path)
         
         # Extract epoch number if present
@@ -106,7 +110,7 @@ def create_training_gifs(results_dir):
     gif_paths = {}
     
     # Create GIFs for each visualization type
-    for viz_type, files in visualization_groups.items():
+    for viz_type, files in tqdm(visualization_groups.items(), desc="Creating GIFs for each visualization type"):
         # Sort by epoch
         files.sort(key=lambda x: x[0])
         
@@ -158,7 +162,8 @@ def create_training_gifs(results_dir):
             else:
                 selected_files = files
             
-            for epoch, file_path in selected_files:
+            # Process each file with tqdm progress bar
+            for epoch, file_path in tqdm(selected_files, desc=f"Processing frames for {viz_type} GIF", leave=False):
                 try:
                     img = Image.open(file_path)
                     

@@ -7,6 +7,7 @@ import torch.optim as optim
 from datetime import datetime
 from torch_geometric.loader import DataLoader
 import numpy as np 
+from tqdm import tqdm  # Import tqdm for progress bars
 
 from .evaluation import evaluate_model_with_nodes, log_to_csv, log_node_predictions_to_csv
 from visualization.visualize import visualize_results
@@ -104,13 +105,19 @@ def train_lipophilicity_model(data_list, smiles_list,
     early_stopping_counter = 0
     best_epoch = 0
     
-    # Training loop
-    for epoch in range(1, epochs + 1):
+    # Training loop with tqdm progress bar
+    print(f"Starting training for {epochs} epochs...")
+    pbar = tqdm(range(1, epochs + 1), desc="Training Progress", position=0)
+    
+    for epoch in pbar:
         model.train()
         epoch_start_time = time.time()
         train_loss = 0
         train_rmse = 0
         
+        # Progress bar for batches (optional, can be disabled for cleaner output)
+        # batch_pbar = tqdm(train_loader, desc=f"Epoch {epoch}", leave=False, position=1) 
+        # for batch in batch_pbar:
         for batch in train_loader:
             batch = batch.to(device)
             optimizer.zero_grad()
@@ -127,13 +134,10 @@ def train_lipophilicity_model(data_list, smiles_list,
             
             train_loss += loss.item() * batch.num_graphs
             train_rmse += batch_rmse.item() * batch.num_graphs
-        
+            
         # Calculate average training metrics
         avg_train_loss = train_loss / len(train_loader.dataset)
         avg_train_rmse = train_rmse / len(train_loader.dataset)
-        
-        # Print basic epoch progress (similar to stable version)
-        print(epoch, train_loss, train_rmse)
         
         # Evaluate on validation set
         val_loss, val_rmse, val_graph_preds, _, _, _ = evaluate_model_with_nodes(model, val_loader, criterion, device)
@@ -151,9 +155,22 @@ def train_lipophilicity_model(data_list, smiles_list,
             torch.save(model.state_dict(), os.path.join(checkpoints_dir, 'best_model.pt'))
         else:
             early_stopping_counter += 1
-            if early_stopping_counter >= early_stopping_patience:
-                print(f"Early stopping triggered after {epoch} epochs")
-                break
+        
+        # Update progress bar with metrics
+        pbar.set_postfix({
+            'train_loss': f'{avg_train_loss:.4f}',
+            'train_rmse': f'{avg_train_rmse:.4f}',
+            'val_loss': f'{val_loss:.4f}',
+            'val_rmse': f'{val_rmse:.4f}',
+            'best_epoch': best_epoch,
+            'lr': f'{optimizer.param_groups[0]["lr"]:.6f}',
+            'patience': f'{early_stopping_counter}/{early_stopping_patience}'
+        })
+        
+        # Early stopping check
+        if early_stopping_counter >= early_stopping_patience:
+            pbar.write(f"Early stopping triggered after {epoch} epochs")
+            break
         
         # Log detailed metrics every 50 epochs (to match stable version)
         if epoch % 50 == 0:
@@ -171,7 +188,9 @@ def train_lipophilicity_model(data_list, smiles_list,
                 all_test_preds = []
                 all_test_targets = []
                 
-                for i, data_batch in enumerate(test_loader):
+                test_pbar = tqdm(enumerate(test_loader), total=len(test_loader), 
+                                desc=f"Testing (Epoch {epoch})", leave=False)
+                for i, data_batch in test_pbar:
                     data_batch = data_batch.to(device)
                     _, y_pred = model(data_batch)
                     batch_test_loss = criterion(y_pred, data_batch.y)
@@ -192,23 +211,33 @@ def train_lipophilicity_model(data_list, smiles_list,
                         ind_test_loss = ((sample_test_pred - sample_test_target) ** 2).mean()
                         ind_test_rmse = np.sqrt(ind_test_loss)
                         
-                        print(f"element {i*batch_size+j}, Epoch {epoch}: Test Loss: {ind_test_loss:.4f}")
-                        print(f"element {i*batch_size+j}, Epoch {epoch}: Test RMSE: {ind_test_rmse:.4f}")
-                        print(f'y_test: {sample_test_target.tolist()}, y_pred: {sample_test_pred.tolist()}')
+                        if j == 0:  # Only print for the first element to avoid clutter
+                            test_pbar.write(f"element {i*batch_size+j}, Epoch {epoch}: "
+                                          f"Test Loss: {ind_test_loss:.4f}, Test RMSE: {ind_test_rmse:.4f}")
                 
                 avg_test_loss = test_loss / len(test_loader.dataset)
                 avg_test_rmse = total_test_rmse / len(test_loader.dataset)
+                pbar.write(f"Epoch {epoch} - Test Loss: {avg_test_loss:.4f}, Test RMSE: {avg_test_rmse:.4f}")
             
             # Get full dataset predictions for logging and visualization
-            _, _, train_graph_preds, train_node_preds, train_node_batch, train_targets = evaluate_model_with_nodes(
-                model, DataLoader(train_data, batch_size=batch_size), criterion, device
-            )
-            _, _, val_graph_preds, val_node_preds, val_node_batch, val_targets = evaluate_model_with_nodes(
-                model, DataLoader(val_data, batch_size=batch_size), criterion, device
-            )
-            _, _, test_graph_preds, test_node_preds, test_node_batch, test_targets = evaluate_model_with_nodes(
-                model, DataLoader(test_data, batch_size=batch_size), criterion, device
-            )
+            pbar.write(f"Generating visualizations for epoch {epoch}...")
+            
+            # Create progress bars for the evaluation steps
+            with tqdm(total=3, desc="Evaluating datasets", leave=False) as eval_pbar:
+                _, _, train_graph_preds, train_node_preds, train_node_batch, train_targets = evaluate_model_with_nodes(
+                    model, DataLoader(train_data, batch_size=batch_size), criterion, device
+                )
+                eval_pbar.update(1)
+                
+                _, _, val_graph_preds, val_node_preds, val_node_batch, val_targets = evaluate_model_with_nodes(
+                    model, DataLoader(val_data, batch_size=batch_size), criterion, device
+                )
+                eval_pbar.update(1)
+                
+                _, _, test_graph_preds, test_node_preds, test_node_batch, test_targets = evaluate_model_with_nodes(
+                    model, DataLoader(test_data, batch_size=batch_size), criterion, device
+                )
+                eval_pbar.update(1)
             
             # Log graph-level results to CSV
             log_to_csv(
@@ -224,20 +253,30 @@ def train_lipophilicity_model(data_list, smiles_list,
             
             # Visualize results
             visualize_results(log_dir, results_dir, epoch)
+            pbar.write(f"Completed visualizations for epoch {epoch}")
+    
+    pbar.close()
     
     # Load the best model
     model.load_state_dict(torch.load(os.path.join(checkpoints_dir, 'best_model.pt')))
     
     # Final evaluation with node predictions
-    train_loss, train_rmse, train_graph_preds, train_node_preds, train_node_batch, train_targets = evaluate_model_with_nodes(
-        model, DataLoader(train_data, batch_size=batch_size), criterion, device
-    )
-    val_loss, val_rmse, val_graph_preds, val_node_preds, val_node_batch, val_targets = evaluate_model_with_nodes(
-        model, DataLoader(val_data, batch_size=batch_size), criterion, device
-    )
-    test_loss, test_rmse, test_graph_preds, test_node_preds, test_node_batch, test_targets = evaluate_model_with_nodes(
-        model, DataLoader(test_data, batch_size=batch_size), criterion, device
-    )
+    print("\nPerforming final evaluation on the best model...")
+    with tqdm(total=3, desc="Final Evaluation", position=0) as final_pbar:
+        train_loss, train_rmse, train_graph_preds, train_node_preds, train_node_batch, train_targets = evaluate_model_with_nodes(
+            model, DataLoader(train_data, batch_size=batch_size), criterion, device
+        )
+        final_pbar.update(1)
+        
+        val_loss, val_rmse, val_graph_preds, val_node_preds, val_node_batch, val_targets = evaluate_model_with_nodes(
+            model, DataLoader(val_data, batch_size=batch_size), criterion, device
+        )
+        final_pbar.update(1)
+        
+        test_loss, test_rmse, test_graph_preds, test_node_preds, test_node_batch, test_targets = evaluate_model_with_nodes(
+            model, DataLoader(test_data, batch_size=batch_size), criterion, device
+        )
+        final_pbar.update(1)
     
     print("\nFinal Evaluation (Best Model):")
     print(f"  Train Loss: {train_loss:.4f} | Train RMSE: {train_rmse:.4f}")
