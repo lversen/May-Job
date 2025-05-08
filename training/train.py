@@ -4,6 +4,7 @@ import random
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.nn.utils import clip_grad_norm_  # Add this import
 from datetime import datetime
 from torch_geometric.loader import DataLoader
 import numpy as np 
@@ -24,7 +25,8 @@ def train_lipophilicity_model(data_list, smiles_list,
                              heads=4,
                              dropout=0.2,
                              base_dir="",
-                             device_str=None):
+                             device_str=None,
+                             clip_grad_norm=1.0):  # Add clip_grad_norm parameter with default value of 1.0
     """
     Train a lipophilicity prediction model with logging similar to the stable version.
     
@@ -41,6 +43,7 @@ def train_lipophilicity_model(data_list, smiles_list,
     - dropout: Dropout probability
     - base_dir: Base directory for outputs
     - device_str: Optional string to specify device ('cpu', 'cuda', 'cuda:0', etc.)
+    - clip_grad_norm: Maximum gradient norm for gradient clipping (1.0 by default)
     
     Returns:
     - model: Trained model
@@ -83,6 +86,9 @@ def train_lipophilicity_model(data_list, smiles_list,
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(results_dir, exist_ok=True)
     os.makedirs(checkpoints_dir, exist_ok=True)
+    
+    # Display gradient clipping setting
+    print(f"Gradient clipping norm: {clip_grad_norm}")
     
     # Split data into training, validation and testing sets
     train_size = int(0.8 * len(data_list))
@@ -158,6 +164,8 @@ def train_lipophilicity_model(data_list, smiles_list,
             loss = criterion(graph_output, batch.y)
             
             loss.backward()
+            # Apply gradient clipping
+            clip_grad_norm_(model.parameters(), clip_grad_norm)
             optimizer.step()
             
             # Calculate RMSE

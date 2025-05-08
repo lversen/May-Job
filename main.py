@@ -56,6 +56,8 @@ def parse_args():
                       help='Patience for early stopping')
     parser.add_argument('--seed', type=int, default=42,
                       help='Random seed for reproducibility')
+    parser.add_argument('--clip_grad_norm', type=float, default=1.0,
+                      help='Maximum gradient norm for gradient clipping (0 to disable)')
     
     # Device parameter
     parser.add_argument('--device', type=str, default=None,
@@ -105,6 +107,9 @@ def main():
     else:
         print("Device: Auto (will use CUDA if available)")
     
+    # Display gradient clipping setting
+    print(f"Gradient clipping norm: {args.clip_grad_norm}")
+    
     print("\nLoading data...")
     
     # Load data
@@ -151,8 +156,9 @@ def main():
         early_stopping_patience=args.early_stopping,
         heads=args.heads,
         dropout=args.dropout,
-        base_dir=output_dir,  # Pass the base directory to the training function
-        device_str=args.device  # Pass the device string
+        base_dir=output_dir,
+        device_str=args.device,
+        clip_grad_norm=args.clip_grad_norm  # Pass the clip_grad_norm parameter
     )
     
     # Create animated GIFs from the training visualizations if requested
