@@ -6,7 +6,7 @@ from datetime import datetime
 from data import load_data, extract_edge_indices, create_atom_features, prepare_data_for_training
 from models import GSR
 from training import train_lipophilicity_model
-from visualization import create_training_animation
+from visualization.gif_generator import create_training_animation
 from utils import set_seed, format_y_values
 
 

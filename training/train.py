@@ -9,7 +9,7 @@ from torch_geometric.loader import DataLoader
 import numpy as np
 
 from .evaluation import evaluate_model_with_nodes, log_to_csv, log_node_predictions_to_csv
-from ..visualization.visualize import visualize_results
+from visualization.visualize import visualize_results
 
 
 def train_lipophilicity_model(data_list, smiles_list, 
@@ -89,7 +89,7 @@ def train_lipophilicity_model(data_list, smiles_list,
     test_loader = DataLoader(test_data, batch_size=batch_size)
     
     # Create model, optimizer, and loss function
-    from ..models.gsr import GSR
+    from models.gsr import GSR
     model = GSR(in_channels=feature_dim, 
                 hidden_channels=hidden_dim, 
                 out_channels=1, 
