@@ -49,12 +49,25 @@ def format_y_values(values):
     return formatted_values
 
 
-def get_device():
+def get_device(device_str=None):
     """
     Get the appropriate device (CUDA or CPU).
+    
+    Parameters:
+    - device_str: Optional string to specify device ('cpu', 'cuda', 'cuda:0', etc.)
     
     Returns:
     - device: PyTorch device
     """
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if device_str is None:
+        # Auto-detect
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    else:
+        # User specified device
+        if device_str.startswith('cuda') and not torch.cuda.is_available():
+            print(f"Warning: CUDA requested but not available. Falling back to CPU.")
+            device = torch.device('cpu')
+        else:
+            device = torch.device(device_str)
+    
     return device

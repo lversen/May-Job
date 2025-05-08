@@ -11,6 +11,7 @@ from tqdm import tqdm  # Import tqdm for progress bars
 
 from .evaluation import evaluate_model_with_nodes, log_to_csv, log_node_predictions_to_csv
 from visualization.visualize import visualize_results
+from utils.helpers import get_device
 
 
 def train_lipophilicity_model(data_list, smiles_list, 
@@ -22,11 +23,30 @@ def train_lipophilicity_model(data_list, smiles_list,
                              early_stopping_patience=100,
                              heads=4,
                              dropout=0.2,
-                             base_dir=""):
+                             base_dir="",
+                             device_str=None):
     """
     Train a lipophilicity prediction model with logging similar to the stable version.
     
-    Parameters remain the same as in the original function.
+    Parameters:
+    - data_list: List of PyTorch Geometric Data objects
+    - smiles_list: List of SMILES strings
+    - epochs: Maximum number of training epochs
+    - batch_size: Batch size for training (0 means no batching - use full dataset)
+    - lr: Learning rate
+    - feature_dim: Dimension of atom features
+    - hidden_dim: Dimension of hidden layers
+    - early_stopping_patience: Number of epochs to wait before early stopping
+    - heads: Number of attention heads in GAT
+    - dropout: Dropout probability
+    - base_dir: Base directory for outputs
+    - device_str: Optional string to specify device ('cpu', 'cuda', 'cuda:0', etc.)
+    
+    Returns:
+    - model: Trained model
+    - log_dir: Directory containing logs
+    - results_dir: Directory containing results
+    - checkpoints_dir: Directory containing model checkpoints
     """
     # Set seeds for reproducibility
     seed = 42
@@ -40,7 +60,7 @@ def train_lipophilicity_model(data_list, smiles_list,
         torch.backends.cudnn.benchmark = False
     
     # Set device
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = get_device(device_str)
     print(f"Using device: {device}")
     
     # Create directories for logs and results
@@ -80,10 +100,21 @@ def train_lipophilicity_model(data_list, smiles_list,
     val_data = [data_list[i] for i in val_indices]
     test_data = [data_list[i] for i in test_indices]
     
-    # Create DataLoaders with batching
-    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_data, batch_size=batch_size)
-    test_loader = DataLoader(test_data, batch_size=batch_size)
+    # Handle batch_size=0 (no batching) case
+    if batch_size <= 0:
+        print("Batch size set to 0 or negative value - using full dataset (no batching)")
+        train_batch_size = len(train_data)
+        val_batch_size = len(val_data)
+        test_batch_size = len(test_data)
+    else:
+        train_batch_size = batch_size
+        val_batch_size = batch_size
+        test_batch_size = batch_size
+    
+    # Create DataLoaders with appropriate batch sizes
+    train_loader = DataLoader(train_data, batch_size=train_batch_size, shuffle=True)
+    val_loader = DataLoader(val_data, batch_size=val_batch_size)
+    test_loader = DataLoader(test_data, batch_size=test_batch_size)
     
     # Create model, optimizer, and loss function
     from models.gsr import GSR
@@ -107,6 +138,7 @@ def train_lipophilicity_model(data_list, smiles_list,
     
     # Training loop with tqdm progress bar
     print(f"Starting training for {epochs} epochs...")
+    print(f"Using {'full dataset (no batching)' if batch_size <= 0 else f'batch size of {batch_size}'}")
     pbar = tqdm(range(1, epochs + 1), desc="Training Progress", position=0)
     
     for epoch in pbar:
@@ -212,7 +244,7 @@ def train_lipophilicity_model(data_list, smiles_list,
                         ind_test_rmse = np.sqrt(ind_test_loss)
                         
                         if j == 0:  # Only print for the first element to avoid clutter
-                            test_pbar.write(f"element {i*batch_size+j}, Epoch {epoch}: "
+                            test_pbar.write(f"element {i*test_batch_size+j}, Epoch {epoch}: "
                                           f"Test Loss: {ind_test_loss:.4f}, Test RMSE: {ind_test_rmse:.4f}")
                 
                 avg_test_loss = test_loss / len(test_loader.dataset)
@@ -224,18 +256,19 @@ def train_lipophilicity_model(data_list, smiles_list,
             
             # Create progress bars for the evaluation steps
             with tqdm(total=3, desc="Evaluating datasets", leave=False) as eval_pbar:
+                # Use same batch_size logic for evaluation
                 _, _, train_graph_preds, train_node_preds, train_node_batch, train_targets = evaluate_model_with_nodes(
-                    model, DataLoader(train_data, batch_size=batch_size), criterion, device
+                    model, DataLoader(train_data, batch_size=train_batch_size), criterion, device
                 )
                 eval_pbar.update(1)
                 
                 _, _, val_graph_preds, val_node_preds, val_node_batch, val_targets = evaluate_model_with_nodes(
-                    model, DataLoader(val_data, batch_size=batch_size), criterion, device
+                    model, DataLoader(val_data, batch_size=val_batch_size), criterion, device
                 )
                 eval_pbar.update(1)
                 
                 _, _, test_graph_preds, test_node_preds, test_node_batch, test_targets = evaluate_model_with_nodes(
-                    model, DataLoader(test_data, batch_size=batch_size), criterion, device
+                    model, DataLoader(test_data, batch_size=test_batch_size), criterion, device
                 )
                 eval_pbar.update(1)
             
@@ -264,17 +297,17 @@ def train_lipophilicity_model(data_list, smiles_list,
     print("\nPerforming final evaluation on the best model...")
     with tqdm(total=3, desc="Final Evaluation", position=0) as final_pbar:
         train_loss, train_rmse, train_graph_preds, train_node_preds, train_node_batch, train_targets = evaluate_model_with_nodes(
-            model, DataLoader(train_data, batch_size=batch_size), criterion, device
+            model, DataLoader(train_data, batch_size=train_batch_size), criterion, device
         )
         final_pbar.update(1)
         
         val_loss, val_rmse, val_graph_preds, val_node_preds, val_node_batch, val_targets = evaluate_model_with_nodes(
-            model, DataLoader(val_data, batch_size=batch_size), criterion, device
+            model, DataLoader(val_data, batch_size=val_batch_size), criterion, device
         )
         final_pbar.update(1)
         
         test_loss, test_rmse, test_graph_preds, test_node_preds, test_node_batch, test_targets = evaluate_model_with_nodes(
-            model, DataLoader(test_data, batch_size=batch_size), criterion, device
+            model, DataLoader(test_data, batch_size=test_batch_size), criterion, device
         )
         final_pbar.update(1)
     

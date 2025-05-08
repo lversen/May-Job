@@ -47,7 +47,7 @@ def parse_args():
     
     # Training parameters
     parser.add_argument('--batch_size', type=int, default=32,
-                      help='Batch size for training')
+                      help='Batch size for training (0 means no batching - full dataset)')
     parser.add_argument('--epochs', type=int, default=1000,
                       help='Maximum number of epochs')
     parser.add_argument('--lr', type=float, default=0.001,
@@ -57,9 +57,17 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=42,
                       help='Random seed for reproducibility')
     
+    # Device parameter
+    parser.add_argument('--device', type=str, default=None,
+                      help='Device to use (e.g. "cpu", "cuda", "cuda:0"). If not specified, will use CUDA if available.')
+    
     # Output parameters
     parser.add_argument('--output_dir', type=str, default='output',
                       help='Base directory for outputs')
+    
+    # Add new parameter for creating GIFs (optional feature)
+    parser.add_argument('--create_gifs', action='store_true',
+                      help='Create animated GIFs from training visualizations')
     
     return parser.parse_args()
 
@@ -84,6 +92,19 @@ def main():
     print("=" * 50)
     print(f"Lipophilicity Prediction - Starting at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 50)
+    
+    # Display batch size setting
+    if args.batch_size <= 0:
+        print("\nRunning with NO batching (using full dataset)")
+    else:
+        print(f"\nBatch size: {args.batch_size}")
+    
+    # Display device setting
+    if args.device:
+        print(f"Device: {args.device}")
+    else:
+        print("Device: Auto (will use CUDA if available)")
+    
     print("\nLoading data...")
     
     # Load data
@@ -130,12 +151,19 @@ def main():
         early_stopping_patience=args.early_stopping,
         heads=args.heads,
         dropout=args.dropout,
-        base_dir=output_dir  # Pass the base directory to the training function
+        base_dir=output_dir,  # Pass the base directory to the training function
+        device_str=args.device  # Pass the device string
     )
     
-    # Create animated GIFs from the training visualizations
-    print("\nCreating animated GIFs from training visualizations...")
-    gif_paths = create_training_animation(log_dir, results_dir)
+    # Create animated GIFs from the training visualizations if requested
+    if args.create_gifs:
+        print("\nCreating animated GIFs from training visualizations...")
+        gif_paths = create_training_animation(log_dir, results_dir)
+        
+        # Print paths to created GIFs
+        print("\nCreated GIFs:")
+        for viz_type, path in gif_paths.items():
+            print(f"  - {viz_type}: {path}")
     
     # Done
     elapsed_time = time.time() - start_time

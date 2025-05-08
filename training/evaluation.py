@@ -61,7 +61,31 @@ def evaluate_model_with_nodes(model, data_loader, criterion, device):
             
             all_graph_predictions.extend(graph_outputs.cpu().numpy())
             all_node_predictions.extend(node_outputs.cpu().numpy())
-            all_node_batch_indices.extend(batch.batch.cpu().numpy())
+            
+            # Check if batch is the entire dataset (no batching mode)
+            if hasattr(batch, 'batch') and batch.batch is not None:
+                all_node_batch_indices.extend(batch.batch.cpu().numpy())
+            else:
+                # If no batching is used, create batch indices manually
+                # Assign each node to its corresponding graph index
+                graph_sizes = []
+                idx = 0
+                for graph_idx, _ in enumerate(targets):
+                    # Get number of nodes in this graph
+                    if idx < len(node_outputs):
+                        # Count forward until we find the start of the next graph
+                        nodes_count = 0
+                        while idx + nodes_count < len(node_outputs):
+                            nodes_count += 1
+                        graph_sizes.append(nodes_count)
+                        idx += nodes_count
+                
+                # Create batch indices based on graph sizes
+                batch_indices = []
+                for graph_idx, size in enumerate(graph_sizes):
+                    batch_indices.extend([graph_idx] * size)
+                all_node_batch_indices.extend(batch_indices)
+                
             all_targets.extend(targets.cpu().numpy())
     
     avg_loss = total_loss / len(data_loader.dataset)
