@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 def visualize_results(log_dir, results_dir, epoch=None):
     """
-    Create visualization plots for training results.
+    Create visualization plots for training results with standardized plot ranges.
     
     Parameters:
     - log_dir: Directory containing training logs
@@ -32,7 +32,27 @@ def visualize_results(log_dir, results_dir, epoch=None):
     
     viz_pbar = tqdm(total=viz_steps, desc="Creating visualizations", leave=False)
     
-    # Plot loss curves
+    # Define standardized ranges for plots based on domain knowledge
+    # These are default values that can be overridden if the actual data exceeds them
+    
+    # Standard ranges for lipophilicity prediction
+    value_min, value_max = -3.0, 7.0  # Typical logP range for drug-like molecules
+    
+    # Standard ranges for metrics
+    loss_min, loss_max = 0.0, 1.0  # Typical MSE range
+    rmse_min, rmse_max = 0.0, 1.0  # Typical RMSE range
+    error_min, error_max = 0.0, 2.0  # Typical error range
+    
+    # Check if we need to adjust the ranges based on actual data
+    loss_max = max(loss_max, metrics_df['Train_Loss'].max() * 1.1, 
+                  metrics_df['Val_Loss'].max() * 1.1, 
+                  metrics_df['Test_Loss'].max() * 1.1)
+    
+    rmse_max = max(rmse_max, metrics_df['Train_RMSE'].max() * 1.1, 
+                  metrics_df['Val_RMSE'].max() * 1.1, 
+                  metrics_df['Test_RMSE'].max() * 1.1)
+    
+    # Plot loss curves with standardized range
     plt.figure(figsize=(12, 8))
     plt.plot(metrics_df['Epoch'], metrics_df['Train_Loss'], label='Training Loss')
     plt.plot(metrics_df['Epoch'], metrics_df['Val_Loss'], label='Validation Loss')
@@ -42,11 +62,12 @@ def visualize_results(log_dir, results_dir, epoch=None):
     plt.title('Loss Curves')
     plt.legend()
     plt.grid(True)
+    plt.ylim(loss_min, loss_max)  # Set standardized y-axis limits
     plt.savefig(os.path.join(results_dir, 'loss_curves.png'), dpi=300, bbox_inches='tight')
     plt.close()
     viz_pbar.update(1)
     
-    # Plot RMSE curves
+    # Plot RMSE curves with standardized range
     plt.figure(figsize=(12, 8))
     plt.plot(metrics_df['Epoch'], metrics_df['Train_RMSE'], label='Training RMSE')
     plt.plot(metrics_df['Epoch'], metrics_df['Val_RMSE'], label='Validation RMSE')
@@ -56,6 +77,7 @@ def visualize_results(log_dir, results_dir, epoch=None):
     plt.title('RMSE Curves')
     plt.legend()
     plt.grid(True)
+    plt.ylim(rmse_min, rmse_max)  # Set standardized y-axis limits
     plt.savefig(os.path.join(results_dir, 'rmse_curves.png'), dpi=300, bbox_inches='tight')
     plt.close()
     viz_pbar.update(1)
@@ -78,18 +100,30 @@ def visualize_results(log_dir, results_dir, epoch=None):
             val_df = pd.read_csv(val_pred_file)
             test_df = pd.read_csv(test_pred_file)
             
-            # Visualization code continues as before...
-            # Combined scatter plot
+            # Update value ranges based on actual data if necessary
+            actual_min = min(train_df['Actual'].min(), val_df['Actual'].min(), test_df['Actual'].min())
+            actual_max = max(train_df['Actual'].max(), val_df['Actual'].max(), test_df['Actual'].max())
+            pred_min = min(train_df['Predicted'].min(), val_df['Predicted'].min(), test_df['Predicted'].min())
+            pred_max = max(train_df['Predicted'].max(), val_df['Predicted'].max(), test_df['Predicted'].max())
+            
+            value_min = min(value_min, actual_min, pred_min) - 0.5  # Add some margin
+            value_max = max(value_max, actual_max, pred_max) + 0.5  # Add some margin
+            
+            # Update error range if necessary
+            max_error = max(train_df['Error'].max(), val_df['Error'].max(), test_df['Error'].max())
+            error_max = max(error_max, max_error * 1.1)  # Add 10% margin
+            
+            # Combined scatter plot with standardized range
             plt.figure(figsize=(12, 10))
             plt.scatter(train_df['Actual'], train_df['Predicted'], alpha=0.6, label='Train', color='blue')
             plt.scatter(val_df['Actual'], val_df['Predicted'], alpha=0.6, label='Validation', color='green')
             plt.scatter(test_df['Actual'], test_df['Predicted'], alpha=0.6, label='Test', color='red')
             
             # Add perfect prediction line
-            min_val = min(train_df['Actual'].min(), val_df['Actual'].min(), test_df['Actual'].min())
-            max_val = max(train_df['Actual'].max(), val_df['Actual'].max(), test_df['Actual'].max())
-            plt.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.5)
+            plt.plot([value_min, value_max], [value_min, value_max], 'k--', alpha=0.5)
             
+            plt.xlim(value_min, value_max)
+            plt.ylim(value_min, value_max)
             plt.xlabel('Actual')
             plt.ylabel('Predicted')
             plt.title(f'Predicted vs Actual Values (Epoch {epoch})')
@@ -99,7 +133,7 @@ def visualize_results(log_dir, results_dir, epoch=None):
             plt.close()
             viz_pbar.update(1)
             
-            # Error histogram
+            # Error histogram with standardized range
             plt.figure(figsize=(12, 8))
             combined_errors = pd.concat([
                 train_df[['Error']].assign(Dataset='Train'),
@@ -108,6 +142,7 @@ def visualize_results(log_dir, results_dir, epoch=None):
             ])
             
             sns.histplot(data=combined_errors, x='Error', hue='Dataset', bins=30, alpha=0.6)
+            plt.xlim(error_min, error_max)  # Set standardized x-axis limits
             plt.title(f'Error Distribution (Epoch {epoch})')
             plt.xlabel('Absolute Error')
             plt.ylabel('Count')
@@ -123,7 +158,10 @@ def visualize_results(log_dir, results_dir, epoch=None):
             ])
             
             if node_pred_files_exist:
-                visualize_node_predictions(log_dir, results_dir, epoch)
+                # Pass the standardized ranges to the node prediction visualization function
+                visualize_node_predictions(log_dir, results_dir, epoch, 
+                                         value_min=value_min, value_max=value_max,
+                                         error_min=error_min, error_max=error_max)
                 viz_pbar.update(1)
             else:
                 print(f"Skipping node prediction visualization for epoch {epoch} as files are missing")
@@ -135,14 +173,19 @@ def visualize_results(log_dir, results_dir, epoch=None):
     print(f"Visualizations saved to {results_dir}")
 
 
-def visualize_node_predictions(log_dir, results_dir, epoch):
+def visualize_node_predictions(log_dir, results_dir, epoch, value_min=None, value_max=None, 
+                              error_min=0.0, error_max=2.0):
     """
-    Create visualizations for node predictions.
+    Create visualizations for node predictions with standardized ranges.
     
     Parameters:
     - log_dir: Directory containing training logs
     - results_dir: Directory to save visualization results
     - epoch: Epoch to visualize
+    - value_min: Minimum value for plot ranges (if None, will be determined from data)
+    - value_max: Maximum value for plot ranges (if None, will be determined from data)
+    - error_min: Minimum error value for plot ranges
+    - error_max: Maximum error value for plot ranges
     """
     epoch_dir = os.path.join(log_dir, f'epoch_{epoch}')
     
@@ -170,6 +213,23 @@ def visualize_node_predictions(log_dir, results_dir, epoch):
     # Combine all node predictions
     all_nodes = pd.concat([train_nodes, val_nodes, test_nodes])
     
+    # Default plot ranges if not provided
+    if value_min is None or value_max is None:
+        # Determine ranges based on the data
+        node_min = all_nodes['node_prediction'].min()
+        node_max = all_nodes['node_prediction'].max()
+        target_min = all_nodes['molecule_target'].min()
+        target_max = all_nodes['molecule_target'].max()
+        
+        # Set ranges with some margin
+        margin = 0.5
+        data_min = min(node_min, target_min) - margin
+        data_max = max(node_max, target_max) + margin
+        
+        # Use these if not provided
+        value_min = value_min if value_min is not None else data_min
+        value_max = value_max if value_max is not None else data_max
+    
     # Create directory for node visualizations
     node_viz_dir = os.path.join(results_dir, 'node_visualizations')
     os.makedirs(node_viz_dir, exist_ok=True)
@@ -177,6 +237,7 @@ def visualize_node_predictions(log_dir, results_dir, epoch):
     # Distribution of node predictions
     plt.figure(figsize=(12, 8))
     sns.histplot(data=all_nodes, x='node_prediction', hue='dataset', bins=30, alpha=0.6)
+    plt.xlim(value_min, value_max)  # Set standardized x-axis limits
     plt.title(f'Distribution of Node Predictions (Epoch {epoch})')
     plt.xlabel('Node Prediction Value')
     plt.ylabel('Count')
@@ -193,10 +254,10 @@ def visualize_node_predictions(log_dir, results_dir, epoch):
                   alpha=0.1, label=dataset, color=color, s=20)
     
     # Add diagonal line for reference
-    min_val = min(all_nodes['molecule_target'].min(), all_nodes['node_prediction'].min())
-    max_val = max(all_nodes['molecule_target'].max(), all_nodes['node_prediction'].max())
-    plt.plot([min_val, max_val], [min_val, max_val], 'k--', alpha=0.5)
+    plt.plot([value_min, value_max], [value_min, value_max], 'k--', alpha=0.5)
     
+    plt.xlim(value_min, value_max)
+    plt.ylim(value_min, value_max)
     plt.xlabel('Molecule Target (Lipophilicity)')
     plt.ylabel('Node Prediction')
     plt.title(f'Node Predictions vs Molecule Targets (Epoch {epoch})')
@@ -206,19 +267,27 @@ def visualize_node_predictions(log_dir, results_dir, epoch):
     plt.close()
     node_viz_pbar.update(1)
     
+    # Determine y-axis limits for the molecule index plot
+    # This is a special case as we plot both predictions and targets
+    mol_y_min = min(value_min, all_nodes['molecule_target'].min()) - 0.5
+    mol_y_max = max(value_max, all_nodes['molecule_target'].max()) + 0.5
+    
     # Node predictions by molecule index
     plt.figure(figsize=(12, 8))
     for dataset, color in zip(['Train', 'Validation', 'Test'], ['blue', 'green', 'red']):
         dataset_nodes = all_nodes[all_nodes['dataset'] == dataset]
-        # Calculate mean node prediction per molecule
-        mol_means = dataset_nodes.groupby('molecule_index')['node_prediction'].mean()
-        # Get corresponding targets
-        mol_targets = dataset_nodes.groupby('molecule_index')['molecule_target'].first()
-        
-        plt.scatter(mol_means.index, mol_means.values, alpha=0.6, label=f'{dataset} (Pred)', color=color, s=20)
-        plt.scatter(mol_targets.index, mol_targets.values, alpha=0.6, label=f'{dataset} (Target)', 
-                  color=color, marker='x', s=30)
+        # Check if dataset has any nodes
+        if len(dataset_nodes) > 0:
+            # Calculate mean node prediction per molecule
+            mol_means = dataset_nodes.groupby('molecule_index')['node_prediction'].mean()
+            # Get corresponding targets
+            mol_targets = dataset_nodes.groupby('molecule_index')['molecule_target'].first()
+            
+            plt.scatter(mol_means.index, mol_means.values, alpha=0.6, label=f'{dataset} (Pred)', color=color, s=20)
+            plt.scatter(mol_targets.index, mol_targets.values, alpha=0.6, label=f'{dataset} (Target)', 
+                      color=color, marker='x', s=30)
     
+    plt.ylim(mol_y_min, mol_y_max)  # Set standardized y-axis limits
     plt.xlabel('Molecule Index')
     plt.ylabel('Value')
     plt.title(f'Mean Node Predictions vs Molecule Targets (Epoch {epoch})')

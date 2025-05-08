@@ -48,11 +48,11 @@ def parse_args():
     # Training parameters
     parser.add_argument('--batch_size', type=int, default=32,
                       help='Batch size for training (0 means no batching - full dataset)')
-    parser.add_argument('--epochs', type=int, default=1000,
+    parser.add_argument('--epochs', type=int, default=5000,
                       help='Maximum number of epochs')
     parser.add_argument('--lr', type=float, default=0.001,
                       help='Learning rate')
-    parser.add_argument('--early_stopping', type=int, default=100,
+    parser.add_argument('--early_stopping', type=int, default=500,
                       help='Patience for early stopping')
     parser.add_argument('--seed', type=int, default=42,
                       help='Random seed for reproducibility')
