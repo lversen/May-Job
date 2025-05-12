@@ -113,42 +113,8 @@ def log_to_csv(epoch, train_loss, train_rmse, val_loss, val_rmse, test_loss, tes
     epoch_dir = os.path.join(log_dir, f'epoch_{epoch}')
     os.makedirs(epoch_dir, exist_ok=True)
     
-    # Save metrics in both formats for compatibility
-    
-    # 1. Save to metrics.csv using CSV writer (stable version style)
-    metrics_file_path = os.path.join(log_dir, 'metrics.csv')
-    file_exists = os.path.exists(metrics_file_path)
-    
-    with open(metrics_file_path, 'a', newline='') as metrics_file:
-        metrics_writer = csv.writer(metrics_file)
-        
-        # Write headers if file doesn't exist
-        if not file_exists:
-            metrics_writer.writerow(['Epoch', 'Train_Loss', 'Train_RMSE', 'Val_Loss', 'Val_RMSE', 'Test_Loss', 'Test_RMSE'])
-        
-        # Write metrics row
-        metrics_writer.writerow([epoch, train_loss, train_rmse, val_loss, val_rmse, test_loss, test_rmse])
-        
-        # Ensure data is written to file
-        metrics_file.flush()
-    
-    # 2. ALSO save to training_metrics.csv using pandas for backward compatibility
-    metrics_df = pd.DataFrame({
-        'Epoch': [epoch],
-        'Train_Loss': [train_loss],
-        'Train_RMSE': [train_rmse],
-        'Val_Loss': [val_loss],
-        'Val_RMSE': [val_rmse],
-        'Test_Loss': [test_loss],
-        'Test_RMSE': [test_rmse]
-    })
-    
-    training_metrics_file = os.path.join(log_dir, 'training_metrics.csv')
-    
-    if os.path.exists(training_metrics_file):
-        metrics_df.to_csv(training_metrics_file, mode='a', header=False, index=False)
-    else:
-        metrics_df.to_csv(training_metrics_file, mode='w', header=True, index=False)
+    # Log metrics (for consistency, though they should already be logged every epoch)
+    log_metrics_to_csv(epoch, train_loss, train_rmse, val_loss, val_rmse, test_loss, test_rmse, log_dir)
     
     # Create separate CSV files for y_test and y_pred (stable version style)
     y_test_file = open(os.path.join(epoch_dir, f'y_test_epoch_{epoch}.csv'), 'w', newline='')
@@ -257,3 +223,65 @@ def log_node_predictions_to_csv(node_predictions, node_batch_indices, targets, s
     df.to_csv(os.path.join(epoch_dir, f'{dataset_name}_node_predictions.csv'), index=False)
     
     print(f"Saved {len(rows)} node predictions for {dataset_name} dataset")
+
+# First, modify the log_metrics_to_csv function in training/evaluation.py:
+
+def log_metrics_to_csv(epoch, train_loss, train_rmse, val_loss, val_rmse, test_loss=None, test_rmse=None, log_dir=None):
+    """
+    Log only the metrics to CSV files, without saving detailed predictions.
+    Called every epoch to create continuous data for loss curves.
+    
+    Parameters:
+    - epoch: Current epoch
+    - train_loss, val_loss, test_loss: Loss values for each dataset
+    - train_rmse, val_rmse, test_rmse: RMSE values for each dataset
+    - log_dir: Directory to save logs
+    """
+    # Create the DataFrame for the new row
+    metrics_row = {
+        'Epoch': epoch,
+        'Train_Loss': train_loss,
+        'Train_RMSE': train_rmse,
+        'Val_Loss': val_loss,
+        'Val_RMSE': val_rmse
+    }
+    
+    # Only include test metrics if they are provided (every 50 epochs)
+    if test_loss is not None and test_rmse is not None:
+        metrics_row['Test_Loss'] = test_loss
+        metrics_row['Test_RMSE'] = test_rmse
+    
+    metrics_df = pd.DataFrame([metrics_row])
+    
+    # Save to metrics.csv using CSV writer
+    metrics_file_path = os.path.join(log_dir, 'metrics.csv')
+    file_exists = os.path.exists(metrics_file_path)
+    
+    if file_exists:
+        # Read existing file to get column structure
+        existing_df = pd.read_csv(metrics_file_path)
+        
+        # If this is a row without test metrics, use NaN for those columns
+        if 'Test_Loss' in existing_df.columns and 'Test_Loss' not in metrics_row:
+            metrics_row['Test_Loss'] = np.nan
+            metrics_row['Test_RMSE'] = np.nan
+        
+        # Append the new row
+        metrics_df = pd.DataFrame([metrics_row])
+        metrics_df.to_csv(metrics_file_path, mode='a', header=False, index=False)
+    else:
+        # First time creating the file
+        columns = ['Epoch', 'Train_Loss', 'Train_RMSE', 'Val_Loss', 'Val_RMSE']
+        if 'Test_Loss' in metrics_row:
+            columns.extend(['Test_Loss', 'Test_RMSE'])
+        
+        metrics_df = pd.DataFrame([metrics_row], columns=columns)
+        metrics_df.to_csv(metrics_file_path, mode='w', header=True, index=False)
+    
+    # Also save to training_metrics.csv for backward compatibility
+    training_metrics_file = os.path.join(log_dir, 'training_metrics.csv')
+    
+    if os.path.exists(training_metrics_file):
+        metrics_df.to_csv(training_metrics_file, mode='a', header=False, index=False)
+    else:
+        metrics_df.to_csv(training_metrics_file, mode='w', header=True, index=False)

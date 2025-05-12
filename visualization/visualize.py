@@ -52,32 +52,82 @@ def visualize_results(log_dir, results_dir, epoch=None):
                   metrics_df['Val_RMSE'].max() * 1.1, 
                   metrics_df['Test_RMSE'].max() * 1.1)
     
-    # Plot loss curves with standardized range
+    # Plot loss curves with logarithmic scale
     plt.figure(figsize=(12, 8))
-    plt.plot(metrics_df['Epoch'], metrics_df['Train_Loss'], label='Training Loss')
-    plt.plot(metrics_df['Epoch'], metrics_df['Val_Loss'], label='Validation Loss')
-    plt.plot(metrics_df['Epoch'], metrics_df['Test_Loss'], label='Test Loss')
+    
+    # Plot RMSE curves with logarithmic scale
+    plt.figure(figsize=(12, 8))
+    
+    # Ensure all RMSE values are positive for log scale (add small epsilon to zeros or negative values)
+    epsilon = 1e-8
+    train_rmse = metrics_df['Train_RMSE'].apply(lambda x: max(x, epsilon))
+    val_rmse = metrics_df['Val_RMSE'].apply(lambda x: max(x, epsilon))
+    
+    plt.plot(metrics_df['Epoch'], train_rmse, label='Training RMSE')
+    plt.plot(metrics_df['Epoch'], val_rmse, label='Validation RMSE')
+    
+    # Only plot test loss if it exists and has data points
+    if 'Test_Loss' in metrics_df.columns:
+        # Filter epochs where test loss is actually measured
+        test_df = metrics_df.dropna(subset=['Test_Loss'])
+        if not test_df.empty:
+            test_loss = test_df['Test_Loss'].apply(lambda x: max(x, epsilon))
+            plt.plot(test_df['Epoch'], test_loss, label='Test Loss', 
+                    marker='o', markersize=4, linestyle='-', linewidth=1.5)
+
+
+    # Only plot test RMSE if it exists and has data points
+    if 'Test_RMSE' in metrics_df.columns:
+        # Filter epochs where test RMSE is actually measured
+        test_df = metrics_df.dropna(subset=['Test_RMSE'])
+        if not test_df.empty:
+            test_rmse = test_df['Test_RMSE'].apply(lambda x: max(x, epsilon))
+            plt.plot(test_df['Epoch'], test_rmse, label='Test RMSE', 
+                    marker='o', markersize=4, linestyle='-', linewidth=1.5)
+    
     plt.xlabel('Epoch')
-    plt.ylabel('Loss (MSE)')
-    plt.title('Loss Curves')
+    plt.ylabel('RMSE')
+    plt.title('RMSE Curves (Log Scale)')
     plt.legend()
-    plt.grid(True)
-    plt.ylim(loss_min, loss_max)  # Set standardized y-axis limits
-    plt.savefig(os.path.join(results_dir, 'loss_curves.png'), dpi=300, bbox_inches='tight')
+    plt.grid(True, which="both", ls="-")
+    
+    # Set logarithmic scale for y-axis
+    plt.yscale('log')
+    
+    # Add grid lines for the log scale
+    plt.grid(True, which="minor", ls="--", alpha=0.4)
+    
+    # Save the figure
+    plt.savefig(os.path.join(results_dir, 'rmse_curves.png'), dpi=300, bbox_inches='tight')
     plt.close()
     viz_pbar.update(1)
     
     # Plot RMSE curves with standardized range
+    # Plot RMSE curves with logarithmic scale
     plt.figure(figsize=(12, 8))
-    plt.plot(metrics_df['Epoch'], metrics_df['Train_RMSE'], label='Training RMSE')
-    plt.plot(metrics_df['Epoch'], metrics_df['Val_RMSE'], label='Validation RMSE')
-    plt.plot(metrics_df['Epoch'], metrics_df['Test_RMSE'], label='Test RMSE')
+    
+    # Ensure all RMSE values are positive for log scale (add small epsilon to zeros or negative values)
+    epsilon = 1e-8
+    train_rmse = metrics_df['Train_RMSE'].apply(lambda x: max(x, epsilon))
+    val_rmse = metrics_df['Val_RMSE'].apply(lambda x: max(x, epsilon))
+    test_rmse = metrics_df['Test_RMSE'].apply(lambda x: max(x, epsilon))
+    
+    plt.plot(metrics_df['Epoch'], train_rmse, label='Training RMSE')
+    plt.plot(metrics_df['Epoch'], val_rmse, label='Validation RMSE')
+    plt.plot(metrics_df['Epoch'], test_rmse, label='Test RMSE')
     plt.xlabel('Epoch')
     plt.ylabel('RMSE')
-    plt.title('RMSE Curves')
+    plt.title('RMSE Curves (Log Scale)')
     plt.legend()
-    plt.grid(True)
-    plt.ylim(rmse_min, rmse_max)  # Set standardized y-axis limits
+    plt.grid(True, which="both", ls="-")
+    
+    # Set logarithmic scale for y-axis
+    plt.yscale('log')
+    
+    # Add grid lines for the log scale
+    plt.grid(True, which="minor", ls="--", alpha=0.4)
+    
+    # Save the figure
     plt.savefig(os.path.join(results_dir, 'rmse_curves.png'), dpi=300, bbox_inches='tight')
     plt.close()
     viz_pbar.update(1)

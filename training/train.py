@@ -10,18 +10,18 @@ from torch_geometric.loader import DataLoader
 import numpy as np 
 from tqdm import tqdm  # Import tqdm for progress bars
 
-from .evaluation import evaluate_model_with_nodes, log_to_csv, log_node_predictions_to_csv
+from .evaluation import evaluate_model_with_nodes, log_to_csv, log_node_predictions_to_csv, log_metrics_to_csv
 from visualization.visualize import visualize_results
 from utils.helpers import get_device
 
 
 def train_lipophilicity_model(data_list, smiles_list, 
-                             epochs=50000, 
+                             epochs=5000, 
                              batch_size=128,
                              lr=0.001,
                              feature_dim=35, 
                              hidden_dim=64, 
-                             early_stopping_patience=int(epochs/10),
+                             early_stopping_patience=500,
                              heads=4,
                              dropout=0.2,
                              base_dir="",
@@ -184,13 +184,16 @@ def train_lipophilicity_model(data_list, smiles_list,
         # Calculate average training metrics
         avg_train_loss = train_loss / len(train_loader.dataset)
         avg_train_rmse = train_rmse / len(train_loader.dataset)
-        
+
         # Evaluate on validation set
         val_loss, val_rmse, val_graph_preds, _, _, _ = evaluate_model_with_nodes(model, val_loader, criterion, device)
         
         # Update learning rate scheduler (conditionally)
         if use_lr_scheduler:
             scheduler.step(val_loss)
+            
+        # Log metrics at every epoch (NEW CODE)
+        log_metrics_to_csv(epoch, avg_train_loss, avg_train_rmse, val_loss, val_rmse, log_dir=log_dir)
         
         # Check for early stopping
         if val_loss < best_val_loss:
@@ -265,6 +268,10 @@ def train_lipophilicity_model(data_list, smiles_list,
                 avg_test_loss = test_loss / len(test_loader.dataset)
                 avg_test_rmse = total_test_rmse / len(test_loader.dataset)
                 pbar.write(f"Epoch {epoch} - Test Loss: {avg_test_loss:.4f}, Test RMSE: {avg_test_rmse:.4f}")
+                
+                # Update metrics CSV with test metrics
+                log_metrics_to_csv(epoch, avg_train_loss, avg_train_rmse, val_loss, val_rmse, 
+                                  avg_test_loss, avg_test_rmse, log_dir)
             
             # Get full dataset predictions for logging and visualization
             pbar.write(f"Generating visualizations for epoch {epoch}...")
@@ -287,7 +294,7 @@ def train_lipophilicity_model(data_list, smiles_list,
                 )
                 eval_pbar.update(1)
             
-            # Log graph-level results to CSV
+            # Log detailed predictions to CSV
             log_to_csv(
                 epoch, avg_train_loss, avg_train_rmse, val_loss, val_rmse, avg_test_loss, avg_test_rmse,
                 train_graph_preds, train_targets, val_graph_preds, val_targets,
