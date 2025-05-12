@@ -73,13 +73,13 @@ def parse_args():
                       help='Dimension of atom features')
     parser.add_argument('--hidden_dim', type=int, default=64,
                       help='Dimension of hidden layers')
-    parser.add_argument('--heads', type=int, default=4,
+    parser.add_argument('--heads', type=int, default=1,
                       help='Number of attention heads in GAT')
-    parser.add_argument('--dropout', type=float, default=0.2,
+    parser.add_argument('--dropout', type=float, default=0,
                       help='Dropout probability')
     
     # Training parameters
-    parser.add_argument('--batch_size', type=int, default=128,
+    parser.add_argument('--batch_size', type=int, default=16,
                       help='Batch size for training (0 means no batching - full dataset)')
     parser.add_argument('--epochs', type=int, default=5000,
                       help='Maximum number of epochs')

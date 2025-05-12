@@ -237,45 +237,30 @@ def log_metrics_to_csv(epoch, train_loss, train_rmse, val_loss, val_rmse, test_l
     - train_rmse, val_rmse, test_rmse: RMSE values for each dataset
     - log_dir: Directory to save logs
     """
-    # Create the DataFrame for the new row
+    import numpy as np
+    
+    # Create the DataFrame for the new row - ALWAYS include all columns
     metrics_row = {
         'Epoch': epoch,
         'Train_Loss': train_loss,
         'Train_RMSE': train_rmse,
         'Val_Loss': val_loss,
-        'Val_RMSE': val_rmse
+        'Val_RMSE': val_rmse,
+        'Test_Loss': test_loss if test_loss is not None else np.nan,
+        'Test_RMSE': test_rmse if test_rmse is not None else np.nan
     }
-    
-    # Only include test metrics if they are provided (every 50 epochs)
-    if test_loss is not None and test_rmse is not None:
-        metrics_row['Test_Loss'] = test_loss
-        metrics_row['Test_RMSE'] = test_rmse
     
     metrics_df = pd.DataFrame([metrics_row])
     
-    # Save to metrics.csv using CSV writer
+    # Save to metrics.csv
     metrics_file_path = os.path.join(log_dir, 'metrics.csv')
     file_exists = os.path.exists(metrics_file_path)
     
     if file_exists:
-        # Read existing file to get column structure
-        existing_df = pd.read_csv(metrics_file_path)
-        
-        # If this is a row without test metrics, use NaN for those columns
-        if 'Test_Loss' in existing_df.columns and 'Test_Loss' not in metrics_row:
-            metrics_row['Test_Loss'] = np.nan
-            metrics_row['Test_RMSE'] = np.nan
-        
-        # Append the new row
-        metrics_df = pd.DataFrame([metrics_row])
+        # Append the new row without header
         metrics_df.to_csv(metrics_file_path, mode='a', header=False, index=False)
     else:
         # First time creating the file
-        columns = ['Epoch', 'Train_Loss', 'Train_RMSE', 'Val_Loss', 'Val_RMSE']
-        if 'Test_Loss' in metrics_row:
-            columns.extend(['Test_Loss', 'Test_RMSE'])
-        
-        metrics_df = pd.DataFrame([metrics_row], columns=columns)
         metrics_df.to_csv(metrics_file_path, mode='w', header=True, index=False)
     
     # Also save to training_metrics.csv for backward compatibility

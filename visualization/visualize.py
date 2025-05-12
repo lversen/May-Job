@@ -45,26 +45,29 @@ def visualize_results(log_dir, results_dir, epoch=None):
     
     # Check if we need to adjust the ranges based on actual data
     loss_max = max(loss_max, metrics_df['Train_Loss'].max() * 1.1, 
-                  metrics_df['Val_Loss'].max() * 1.1, 
-                  metrics_df['Test_Loss'].max() * 1.1)
+                  metrics_df['Val_Loss'].max() * 1.1)
+    
+    if 'Test_Loss' in metrics_df.columns:
+        test_loss_max = metrics_df['Test_Loss'].dropna().max() if not metrics_df['Test_Loss'].empty else 0
+        loss_max = max(loss_max, test_loss_max * 1.1)
     
     rmse_max = max(rmse_max, metrics_df['Train_RMSE'].max() * 1.1, 
-                  metrics_df['Val_RMSE'].max() * 1.1, 
-                  metrics_df['Test_RMSE'].max() * 1.1)
+                  metrics_df['Val_RMSE'].max() * 1.1)
+    
+    if 'Test_RMSE' in metrics_df.columns:
+        test_rmse_max = metrics_df['Test_RMSE'].dropna().max() if not metrics_df['Test_RMSE'].empty else 0
+        rmse_max = max(rmse_max, test_rmse_max * 1.1)
     
     # Plot loss curves with logarithmic scale
     plt.figure(figsize=(12, 8))
     
-    # Plot RMSE curves with logarithmic scale
-    plt.figure(figsize=(12, 8))
-    
-    # Ensure all RMSE values are positive for log scale (add small epsilon to zeros or negative values)
+    # Ensure all loss values are positive for log scale (add small epsilon to zeros or negative values)
     epsilon = 1e-8
-    train_rmse = metrics_df['Train_RMSE'].apply(lambda x: max(x, epsilon))
-    val_rmse = metrics_df['Val_RMSE'].apply(lambda x: max(x, epsilon))
+    train_loss = metrics_df['Train_Loss'].apply(lambda x: max(x, epsilon))
+    val_loss = metrics_df['Val_Loss'].apply(lambda x: max(x, epsilon))
     
-    plt.plot(metrics_df['Epoch'], train_rmse, label='Training RMSE')
-    plt.plot(metrics_df['Epoch'], val_rmse, label='Validation RMSE')
+    plt.plot(metrics_df['Epoch'], train_loss, label='Training Loss')
+    plt.plot(metrics_df['Epoch'], val_loss, label='Validation Loss')
     
     # Only plot test loss if it exists and has data points
     if 'Test_Loss' in metrics_df.columns:
@@ -74,20 +77,10 @@ def visualize_results(log_dir, results_dir, epoch=None):
             test_loss = test_df['Test_Loss'].apply(lambda x: max(x, epsilon))
             plt.plot(test_df['Epoch'], test_loss, label='Test Loss', 
                     marker='o', markersize=4, linestyle='-', linewidth=1.5)
-
-
-    # Only plot test RMSE if it exists and has data points
-    if 'Test_RMSE' in metrics_df.columns:
-        # Filter epochs where test RMSE is actually measured
-        test_df = metrics_df.dropna(subset=['Test_RMSE'])
-        if not test_df.empty:
-            test_rmse = test_df['Test_RMSE'].apply(lambda x: max(x, epsilon))
-            plt.plot(test_df['Epoch'], test_rmse, label='Test RMSE', 
-                    marker='o', markersize=4, linestyle='-', linewidth=1.5)
     
     plt.xlabel('Epoch')
-    plt.ylabel('RMSE')
-    plt.title('RMSE Curves (Log Scale)')
+    plt.ylabel('Loss')
+    plt.title('Loss Curves (Log Scale)')
     plt.legend()
     plt.grid(True, which="both", ls="-")
     
@@ -98,11 +91,10 @@ def visualize_results(log_dir, results_dir, epoch=None):
     plt.grid(True, which="minor", ls="--", alpha=0.4)
     
     # Save the figure
-    plt.savefig(os.path.join(results_dir, 'rmse_curves.png'), dpi=300, bbox_inches='tight')
+    plt.savefig(os.path.join(results_dir, 'loss_curves.png'), dpi=300, bbox_inches='tight')
     plt.close()
     viz_pbar.update(1)
     
-    # Plot RMSE curves with standardized range
     # Plot RMSE curves with logarithmic scale
     plt.figure(figsize=(12, 8))
     
@@ -110,11 +102,19 @@ def visualize_results(log_dir, results_dir, epoch=None):
     epsilon = 1e-8
     train_rmse = metrics_df['Train_RMSE'].apply(lambda x: max(x, epsilon))
     val_rmse = metrics_df['Val_RMSE'].apply(lambda x: max(x, epsilon))
-    test_rmse = metrics_df['Test_RMSE'].apply(lambda x: max(x, epsilon))
     
     plt.plot(metrics_df['Epoch'], train_rmse, label='Training RMSE')
     plt.plot(metrics_df['Epoch'], val_rmse, label='Validation RMSE')
-    plt.plot(metrics_df['Epoch'], test_rmse, label='Test RMSE')
+    
+    # Only plot test RMSE if it exists and has data points
+    if 'Test_RMSE' in metrics_df.columns:
+        # Filter epochs where test RMSE is actually measured
+        test_df = metrics_df.dropna(subset=['Test_RMSE'])
+        if not test_df.empty:
+            test_rmse = test_df['Test_RMSE'].apply(lambda x: max(x, epsilon))
+            plt.plot(test_df['Epoch'], test_rmse, label='Test RMSE', 
+                    marker='o', markersize=4, linestyle='-', linewidth=1.5)
+    
     plt.xlabel('Epoch')
     plt.ylabel('RMSE')
     plt.title('RMSE Curves (Log Scale)')
