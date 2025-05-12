@@ -1,6 +1,7 @@
 import argparse
 import os
 import time
+import glob
 from datetime import datetime
 
 from data import load_data, extract_edge_indices, create_atom_features, prepare_data_for_training
@@ -10,6 +11,45 @@ from visualization.gif_generator import create_training_animation
 from utils import set_seed, format_y_values
 
 
+# Dataset configurations with specific column names
+DATASET_CONFIG = {
+    'bace': {
+        'data_file': 'bace.csv',
+        'target_column': 'pIC50',
+        'smiles_column': 'mol',  # Add SMILES column name
+        'description': 'BACE Inhibition (pIC50)'
+    },
+    'esol': {
+        'data_file': 'ESOL.csv',
+        'target_column': 'measured log solubility in mols per litre',
+        'smiles_column': 'SMILES',  # Different SMILES column name for ESOL
+        'description': 'ESOL Solubility'
+    },
+    'fsolv': {
+        'data_file': 'Fsolv.csv',
+        'target_column': 'expt',
+        'smiles_column': 'smiles',  # Assuming FreeSolv uses 'SMILES'
+        'description': 'FreeSolv Hydration Free Energy'
+    },
+    'lipophilicity': {
+        'data_file': 'Lipophilicity!.csv',
+        'target_column': 'exp',
+        'smiles_column': 'smiles',
+        'description': 'Lipophilicity'
+    }
+}
+
+# Feature file names to look for
+FEATURE_FILES = [
+    'angles.csv',
+    'dipole_momentum.csv',
+    'widths.csv',
+    'lengths.csv',
+    'heights.csv',
+    'volumes.csv'
+]
+
+
 def parse_args():
     """
     Parse command line arguments.
@@ -17,23 +57,16 @@ def parse_args():
     Returns:
     - args: Parsed arguments
     """
-    parser = argparse.ArgumentParser(description='Lipophilicity Prediction with Graph Neural Networks')
+    parser = argparse.ArgumentParser(description='Molecular Property Prediction with Graph Neural Networks')
     
-    # Data parameters
-    parser.add_argument('--data_file', type=str, default='datasets/Lipophilicity!.csv',
-                      help='Path to the main data file')
-    parser.add_argument('--angles_file', type=str, default='datasets/angles.csv',
-                      help='Path to the angles file')
-    parser.add_argument('--dipole_momentum_file', type=str, default='datasets/dipole_momentum.csv',
-                      help='Path to the dipole momentum file')
-    parser.add_argument('--widths_file', type=str, default='datasets/widths.csv',
-                      help='Path to the widths file')
-    parser.add_argument('--lengths_file', type=str, default='datasets/lengths.csv',
-                      help='Path to the lengths file')
-    parser.add_argument('--heights_file', type=str, default='datasets/heights.csv',
-                      help='Path to the heights file')
-    parser.add_argument('--volumes_file', type=str, default='datasets/volumes.csv',
-                      help='Path to the volumes file')
+    # Dataset parameters
+    parser.add_argument('--dataset', type=str, required=True, 
+                      choices=list(DATASET_CONFIG.keys()),
+                      help=f'Dataset to use: {", ".join(DATASET_CONFIG.keys())}')
+    parser.add_argument('--data_dir', type=str, default='datasets',
+                      help='Base directory containing dataset folders')
+    parser.add_argument('--smiles_column', type=str, default=None,
+                      help='Name of the SMILES column in the data file (overrides default)')
     
     # Model parameters
     parser.add_argument('--feature_dim', type=int, default=35,
@@ -52,8 +85,6 @@ def parse_args():
                       help='Maximum number of epochs')
     parser.add_argument('--lr', type=float, default=0.001,
                       help='Learning rate')
-    parser.add_argument('--early_stopping', type=int, default=500,
-                      help='Patience for early stopping')
     parser.add_argument('--seed', type=int, default=42,
                       help='Random seed for reproducibility')
     parser.add_argument('--clip_grad_norm', type=float, default=1.0,
@@ -74,12 +105,65 @@ def parse_args():
     return parser.parse_args()
 
 
+def find_dataset_files(dataset, data_dir):
+    """
+    Find all relevant files for the specified dataset.
+    
+    Parameters:
+    - dataset: Name of the dataset
+    - data_dir: Base directory containing dataset folders
+    
+    Returns:
+    - dict: Dictionary containing all file paths
+    """
+    dataset_config = DATASET_CONFIG[dataset]
+    dataset_path = os.path.join(data_dir, dataset)
+    csvs_path = os.path.join(dataset_path, 'csvs')
+    
+    # If csvs subdirectory doesn't exist, try the dataset directory itself
+    if not os.path.exists(csvs_path):
+        csvs_path = dataset_path
+    
+    # If dataset directory doesn't exist, try the base directory
+    if not os.path.exists(csvs_path):
+        csvs_path = data_dir
+    
+    result = {
+        'data_file': None,
+        'feature_files': {}
+    }
+    
+    # Find the main data file
+    data_file_name = dataset_config['data_file']
+    data_file_path = os.path.join(csvs_path, data_file_name)
+    
+    if os.path.exists(data_file_path):
+        result['data_file'] = data_file_path
+    else:
+        # Try to find any CSV file containing the dataset name
+        potential_files = glob.glob(os.path.join(csvs_path, f'*{dataset}*.csv'))
+        if potential_files:
+            result['data_file'] = potential_files[0]
+    
+    # Find feature files
+    for feature_file in FEATURE_FILES:
+        feature_path = os.path.join(csvs_path, feature_file)
+        if os.path.exists(feature_path):
+            feature_name = os.path.splitext(feature_file)[0]  # Remove the .csv extension
+            result['feature_files'][feature_name] = feature_path
+    
+    return result
+
+
 def main():
     """
-    Main function to run the lipophilicity prediction model.
+    Main function to run the molecular property prediction model.
     """
     # Parse arguments
     args = parse_args()
+    
+    # Get dataset configuration
+    dataset_config = DATASET_CONFIG[args.dataset]
     
     # Set random seed
     set_seed(args.seed)
@@ -88,12 +172,23 @@ def main():
     start_time = time.time()
     
     # Set up output directory
-    output_dir = args.output_dir
+    output_dir = os.path.join(args.output_dir, args.dataset)
     os.makedirs(output_dir, exist_ok=True)
     
     print("=" * 50)
-    print(f"Lipophilicity Prediction - Starting at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"{dataset_config['description']} Prediction - Starting at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 50)
+    
+    # Find dataset files
+    files = find_dataset_files(args.dataset, args.data_dir)
+    
+    if files['data_file'] is None:
+        raise FileNotFoundError(f"Could not find data file for dataset: {args.dataset}")
+    
+    print(f"Using data file: {files['data_file']}")
+    print(f"Found {len(files['feature_files'])} feature files:")
+    for feature, file_path in files['feature_files'].items():
+        print(f"  - {feature}: {file_path}")
     
     # Display batch size setting
     if args.batch_size <= 0:
@@ -112,21 +207,32 @@ def main():
     
     print("\nLoading data...")
     
-    # Load data
-    additional_features_files = {
-        'angles': args.angles_file,
-        'dipole_momentum': args.dipole_momentum_file,
-        'widths': args.widths_file,
-        'lengths': args.lengths_file,
-        'heights': args.heights_file,
-        'volumes': args.volumes_file
-    }
+    # Load data with additional feature files
+    df, features_dict = load_data(files['data_file'], files['feature_files'])
     
-    df, features_dict = load_data(args.data_file, additional_features_files)
+    # Determine SMILES column - command line arg overrides config
+    smiles_column = args.smiles_column if args.smiles_column else dataset_config['smiles_column']
+    
+    # Display column info
+    print(f"Target column: '{dataset_config['target_column']}'")
+    print(f"SMILES column: '{smiles_column}'")
+    
+    # Check if the SMILES column exists
+    if smiles_column not in df.columns:
+        # If not, try to automatically detect it
+        potential_smiles_columns = [col for col in df.columns if 'smile' in col.lower()]
+        if potential_smiles_columns:
+            smiles_column = potential_smiles_columns[0]
+            print(f"SMILES column '{dataset_config['smiles_column']}' not found. Using '{smiles_column}' instead.")
+        else:
+            # Show available columns and raise error
+            print(f"Available columns: {', '.join(df.columns)}")
+            raise KeyError(f"Could not find SMILES column '{smiles_column}' in data file")
     
     # Extract SMILES and target values
-    smiles_list = list(df['smiles'])
-    y_values = list(df['exp'])
+    smiles_list = list(df[smiles_column])
+    target_column = dataset_config['target_column']
+    y_values = list(df[target_column])
     y = format_y_values(y_values)
     
     print(f"Loaded {len(smiles_list)} molecules")
@@ -153,12 +259,12 @@ def main():
         lr=args.lr,
         feature_dim=args.feature_dim,
         hidden_dim=args.hidden_dim,
-        early_stopping_patience=args.early_stopping,
+        early_stopping_patience=int(args.epochs/10),
         heads=args.heads,
         dropout=args.dropout,
         base_dir=output_dir,
         device_str=args.device,
-        clip_grad_norm=args.clip_grad_norm  # Pass the clip_grad_norm parameter
+        clip_grad_norm=args.clip_grad_norm
     )
     
     # Create animated GIFs from the training visualizations if requested
