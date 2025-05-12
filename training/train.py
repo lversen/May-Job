@@ -16,17 +16,18 @@ from utils.helpers import get_device
 
 
 def train_lipophilicity_model(data_list, smiles_list, 
-                             epochs=1000, 
-                             batch_size=32,
+                             epochs=50000, 
+                             batch_size=128,
                              lr=0.001,
                              feature_dim=35, 
                              hidden_dim=64, 
-                             early_stopping_patience=100,
+                             early_stopping_patience=int(epochs/10),
                              heads=4,
                              dropout=0.2,
                              base_dir="",
                              device_str=None,
-                             clip_grad_norm=1.0):  # Add clip_grad_norm parameter with default value of 1.0
+                             clip_grad_norm=1.0,
+                             use_lr_scheduler=True):
     """
     Train a lipophilicity prediction model with logging similar to the stable version.
     
@@ -133,7 +134,12 @@ def train_lipophilicity_model(data_list, smiles_list,
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
     
     # Learning rate scheduler
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=50)
+    if use_lr_scheduler:
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=int(epochs/30))
+        print("Using ReduceLROnPlateau learning rate scheduler")
+    else:
+        scheduler = None
+        print("Learning rate scheduler disabled, using fixed learning rate")
     
     criterion = nn.MSELoss()
     
@@ -182,8 +188,9 @@ def train_lipophilicity_model(data_list, smiles_list,
         # Evaluate on validation set
         val_loss, val_rmse, val_graph_preds, _, _, _ = evaluate_model_with_nodes(model, val_loader, criterion, device)
         
-        # Update learning rate scheduler
-        scheduler.step(val_loss)
+        # Update learning rate scheduler (conditionally)
+        if use_lr_scheduler:
+            scheduler.step(val_loss)
         
         # Check for early stopping
         if val_loss < best_val_loss:
