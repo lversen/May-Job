@@ -57,21 +57,16 @@ class GSR(nn.Module):
 
         # Apply the graph convolutional layers with batch normalization
         x = self.conv1(x, edge_index)
-        x = self.bn1(x)
-        x = torch.relu(x)
-        
+        x = torch.tanh(x)
+
         x = self.conv2(x, edge_index)
-        x = self.bn2(x)
-        x = torch.relu(x)
-        
+        x = torch.tanh(x)
+
         x = self.conv3(x, edge_index)
-        x = self.bn3(x)
-        x = torch.relu(x)
-        
+        x = torch.tanh(x)
+
         x = self.conv4(x, edge_index)
-        x = self.bn4(x)
-        x = torch.relu(x)
-        
+        x = torch.tanh(x)
         # Final output layer
         node_preds = self.conv_out(x, edge_index)
         

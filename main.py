@@ -83,12 +83,10 @@ def parse_args():
                       help='Batch size for training (0 means no batching - full dataset)')
     parser.add_argument('--epochs', type=int, default=5000,
                       help='Maximum number of epochs')
-    parser.add_argument('--lr', type=float, default=0.001,
+    parser.add_argument('--lr', type=float, default=0.00075,
                       help='Learning rate')
     parser.add_argument('--seed', type=int, default=42,
                       help='Random seed for reproducibility')
-    parser.add_argument('--clip_grad_norm', type=float, default=1.0,
-                      help='Maximum gradient norm for gradient clipping (0 to disable)')
     parser.add_argument('--use_lr_scheduler', action='store_true', default=True,
                     help='Use learning rate scheduler (ReduceLROnPlateau)')
     parser.add_argument('--no_lr_scheduler', action='store_false', dest='use_lr_scheduler',
@@ -205,9 +203,7 @@ def main():
     else:
         print("Device: Auto (will use CUDA if available)")
     
-    # Display gradient clipping setting
-    print(f"Gradient clipping norm: {args.clip_grad_norm}")
-    
+
     print("\nLoading data...")
     
     # Load data with additional feature files
@@ -251,6 +247,8 @@ def main():
     # Prepare data for training
     print("Preparing data for model...")
     data_list = prepare_data_for_training(x, edge_index, y, smiles_list)
+    num_features = data_list[0].x.shape[1]
+    print(f"\nTotal number of atom features: {num_features}")
     
     # Train model
     print("\nStarting model training...")
@@ -267,7 +265,6 @@ def main():
         dropout=args.dropout,
         base_dir=output_dir,
         device_str=args.device,
-        clip_grad_norm=args.clip_grad_norm,
         use_lr_scheduler=args.use_lr_scheduler  # Add this line
     )
         

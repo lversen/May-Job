@@ -26,7 +26,6 @@ def train_lipophilicity_model(data_list, smiles_list,
                              dropout=0.2,
                              base_dir="",
                              device_str=None,
-                             clip_grad_norm=1.0,
                              use_lr_scheduler=True):
     """
     Train a lipophilicity prediction model with logging similar to the stable version.
@@ -44,7 +43,6 @@ def train_lipophilicity_model(data_list, smiles_list,
     - dropout: Dropout probability
     - base_dir: Base directory for outputs
     - device_str: Optional string to specify device ('cpu', 'cuda', 'cuda:0', etc.)
-    - clip_grad_norm: Maximum gradient norm for gradient clipping (1.0 by default)
     
     Returns:
     - model: Trained model
@@ -87,10 +85,7 @@ def train_lipophilicity_model(data_list, smiles_list,
     os.makedirs(log_dir, exist_ok=True)
     os.makedirs(results_dir, exist_ok=True)
     os.makedirs(checkpoints_dir, exist_ok=True)
-    
-    # Display gradient clipping setting
-    print(f"Gradient clipping norm: {clip_grad_norm}")
-    
+
     # Split data into training, validation and testing sets
     train_size = int(0.8 * len(data_list))
     val_size = int(0.1 * len(data_list))
@@ -131,7 +126,7 @@ def train_lipophilicity_model(data_list, smiles_list,
                 heads=heads, 
                 dropout=dropout).to(device)
     
-    optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
+    optimizer = optim.RMSprop(model.parameters(), lr=lr)
     
     # Learning rate scheduler
     if use_lr_scheduler:
@@ -170,8 +165,6 @@ def train_lipophilicity_model(data_list, smiles_list,
             loss = criterion(graph_output, batch.y)
             
             loss.backward()
-            # Apply gradient clipping
-            clip_grad_norm_(model.parameters(), clip_grad_norm)
             optimizer.step()
             
             # Calculate RMSE
