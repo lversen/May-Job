@@ -19,7 +19,72 @@ def compute_rmse(predictions, targets):
     rmse = torch.sqrt(mse)
     return rmse
 
-
+def log_molecule_atom_predictions_to_csv(node_predictions, node_batch_indices, targets, indices, epoch_dir, epoch):
+    """
+    Save molecule-level predictions with all atom predictions to CSV.
+    
+    Parameters:
+    - node_predictions: List of node (atom) predictions
+    - node_batch_indices: List of batch indices for each node
+    - targets: List of target values for each molecule
+    - indices: Indices of molecules in the dataset
+    - epoch_dir: Directory to save the CSV files
+    - epoch: Current epoch number
+    """
+    import csv
+    from tqdm import tqdm
+    
+    # Create a mapping between batch indices and molecule indices
+    unique_batch_indices = set(node_batch_indices)
+    batch_to_mol_idx = {batch_idx: idx for idx, batch_idx in enumerate(sorted(unique_batch_indices))}
+    
+    # Create a dictionary to store atom predictions by molecule
+    molecule_atoms = {}
+    
+    # Group predictions by molecule
+    for node_idx, (pred, batch_idx) in enumerate(tqdm(
+        zip(node_predictions, node_batch_indices), 
+        total=len(node_predictions),
+        desc=f"Processing molecule atom predictions",
+        leave=False
+    )):
+        mol_idx = batch_to_mol_idx[batch_idx]
+        if mol_idx < len(indices):
+            orig_mol_idx = indices[mol_idx]
+            
+            if orig_mol_idx not in molecule_atoms:
+                molecule_atoms[orig_mol_idx] = []
+            
+            molecule_atoms[orig_mol_idx].append(pred[0])  # Assuming prediction is a 1D array with one value
+    
+    # Create y_pred CSV with atom predictions for each molecule
+    y_pred_file = os.path.join(epoch_dir, f'y_pred_epoch_{epoch}.csv')
+    with open(y_pred_file, 'w', newline='') as f:
+        writer = csv.writer(f)
+        
+        # For each molecule, write a row with all its atom predictions
+        for orig_mol_idx, atom_preds in molecule_atoms.items():
+            row = [orig_mol_idx] + atom_preds
+            writer.writerow(row)
+    
+    # Create y_actual CSV with ground truth values
+    y_actual_file = os.path.join(epoch_dir, f'y_actual_epoch_{epoch}.csv')
+    with open(y_actual_file, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['Molecule_ID', 'Actual_Value'])
+        
+        # Create a mapping from original molecule index to target value
+        mol_idx_to_target = {}
+        for i, orig_idx in enumerate(indices):
+            if i < len(targets):
+                mol_idx_to_target[orig_idx] = targets[i][0]
+        
+        # Write each molecule's target value
+        for orig_mol_idx in molecule_atoms.keys():
+            if orig_mol_idx in mol_idx_to_target:
+                writer.writerow([orig_mol_idx, mol_idx_to_target[orig_mol_idx]])
+    
+    print(f"Saved atom predictions for {len(molecule_atoms)} molecules")
 def evaluate_model_with_nodes(model, data_loader, criterion, device):
     """
     Evaluate model on a dataset, returning both node-level and graph-level predictions.
