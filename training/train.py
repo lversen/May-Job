@@ -10,7 +10,7 @@ from torch_geometric.loader import DataLoader
 import numpy as np 
 from tqdm import tqdm  # Import tqdm for progress bars
 
-from .evaluation import evaluate_model_with_nodes, log_to_csv, log_node_predictions_to_csv, log_metrics_to_csv
+from .evaluation import *
 from visualization.visualize import visualize_results
 from utils.helpers import get_device
 
@@ -305,7 +305,9 @@ def train_lipophilicity_model(data_list, smiles_list,
             log_node_predictions_to_csv(train_node_preds, train_node_batch, train_targets, smiles_list, train_indices, epoch_dir, 'train')
             log_node_predictions_to_csv(val_node_preds, val_node_batch, val_targets, smiles_list, val_indices, epoch_dir, 'val')
             log_node_predictions_to_csv(test_node_preds, test_node_batch, test_targets, smiles_list, test_indices, epoch_dir, 'test')
-            
+            log_molecule_atom_predictions_to_csv(train_node_preds, train_node_batch, train_targets, train_indices, epoch_dir, epoch)
+            log_molecule_atom_predictions_to_csv(val_node_preds, val_node_batch, val_targets, val_indices, epoch_dir, epoch)
+            log_molecule_atom_predictions_to_csv(test_node_preds, test_node_batch, test_targets, test_indices, epoch_dir, epoch)
             # Visualize results
             visualize_results(log_dir, results_dir, epoch)
             pbar.write(f"Completed visualizations for epoch {epoch}")
@@ -345,7 +347,9 @@ def train_lipophilicity_model(data_list, smiles_list,
     log_node_predictions_to_csv(train_node_preds, train_node_batch, train_targets, smiles_list, train_indices, final_dir, 'train')
     log_node_predictions_to_csv(val_node_preds, val_node_batch, val_targets, smiles_list, val_indices, final_dir, 'val')
     log_node_predictions_to_csv(test_node_preds, test_node_batch, test_targets, smiles_list, test_indices, final_dir, 'test')
-    
+    log_molecule_atom_predictions_to_csv(train_node_preds, train_node_batch, train_targets, train_indices, final_dir, 'final')
+    log_molecule_atom_predictions_to_csv(val_node_preds, val_node_batch, val_targets, val_indices, final_dir, 'final')
+    log_molecule_atom_predictions_to_csv(test_node_preds, test_node_batch, test_targets, test_indices, final_dir, 'final')
     # Create final visualizations
     visualize_results(log_dir, results_dir, best_epoch)
     
