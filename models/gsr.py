@@ -34,12 +34,6 @@ class GSR(nn.Module):
         
         # Final output layer with single head
         self.conv_out = GATConv(hidden_channels * heads, out_channels, heads=1, concat=False, dropout=dropout)
-        
-        # Batch normalization layers for stable training
-        self.bn1 = nn.BatchNorm1d(hidden_channels * heads)
-        self.bn2 = nn.BatchNorm1d(hidden_channels * heads)
-        self.bn3 = nn.BatchNorm1d(hidden_channels * heads)
-        self.bn4 = nn.BatchNorm1d(hidden_channels * heads)
 
     def forward(self, data):
         """
