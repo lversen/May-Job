@@ -35,11 +35,12 @@ class GSR(nn.Module):
         # Final output layer with single head
         self.conv_out = GATConv(hidden_channels * heads, out_channels, heads=1, concat=False, dropout=dropout)
         
-        # Batch normalization layers for stable training
-        self.bn1 = nn.BatchNorm1d(hidden_channels * heads)
-        self.bn2 = nn.BatchNorm1d(hidden_channels * heads)
-        self.bn3 = nn.BatchNorm1d(hidden_channels * heads)
-        self.bn4 = nn.BatchNorm1d(hidden_channels * heads)
+        # Layer normalization layers for stable training (replaces BatchNorm)
+        # LayerNorm works with any batch size, including 1
+        self.ln1 = nn.LayerNorm(hidden_channels * heads)
+        self.ln2 = nn.LayerNorm(hidden_channels * heads)
+        self.ln3 = nn.LayerNorm(hidden_channels * heads)
+        self.ln4 = nn.LayerNorm(hidden_channels * heads)
 
     def forward(self, data):
         """
@@ -55,21 +56,21 @@ class GSR(nn.Module):
         x, edge_index = data.x, data.edge_index
         edge_index, _ = add_self_loops(edge_index, num_nodes=x.size(0))
 
-        # Apply the graph convolutional layers with batch normalization
+        # Apply the graph convolutional layers with layer normalization
         x = self.conv1(x, edge_index)
-        x = self.bn1(x)
+        x = self.ln1(x)
         x = torch.relu(x)
         
         x = self.conv2(x, edge_index)
-        x = self.bn2(x)
+        x = self.ln2(x)
         x = torch.relu(x)
         
         x = self.conv3(x, edge_index)
-        x = self.bn3(x)
+        x = self.ln3(x)
         x = torch.relu(x)
         
         x = self.conv4(x, edge_index)
-        x = self.bn4(x)
+        x = self.ln4(x)
         x = torch.relu(x)
         
         # Final output layer
