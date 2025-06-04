@@ -76,16 +76,50 @@ def extract_edge_indices(smiles_list):
     return all_edge_indexes
 
 
+def get_base_feature_dimension():
+    """
+    Calculate the base feature dimension (without additional global features).
+    
+    Returns:
+    - int: Base feature dimension
+    """
+    # Feature breakdown:
+    # Per-molecule features added to each atom (3):
+    #   - is_in_ring, is_aromatic, formal_charge
+    
+    # Per-atom features (13):
+    #   - degree, atomic_num, total_num_hs, total_valence, num_radical_electrons
+    #   - formal_charge, hybridization, mass_normalized, atomic_num_normalized_1
+    #   - atomic_num_normalized_2, electronegativity, has_electronegativity
+    #   - has_implicit_hs
+    
+    # Global molecule features added to each atom (12):
+    #   - min_degree, num_hbond_donors, num_rings, num_rotatable_bonds
+    #   - polar_surface_area, molecular_weight, num_atoms, hba, hbd
+    #   - fraction_sp2, valence, general_electronegativity
+    
+    # Hydroxyl group feature (1):
+    #   - hydroxyl_presence
+    
+    # Total base features: 3 + 13 + 12 + 1 = 29
+    return 29
+
+
 def create_atom_features(smiles_list, features_dict=None):
     """
     Create atom-level features for all molecules.
     
     Parameters:
     - smiles_list: List of SMILES strings
-    - features_dict: Dictionary of additional molecular features
+    - features_dict: Dictionary of additional molecular features (can be None/empty)
     
     Returns:
     - x: List of atom feature matrices for each molecule
+    
+    Feature Dimension Information:
+    - Base features (no additional global features): 29 dimensions
+    - With 6 additional global features: 29 + 6 = 35 dimensions
+    - Available additional features: angles, dipole_momentum, widths, lengths, heights, volumes
     """
     # A dictionary mapping atomic numbers to electronegativity values (Pauling scale)
     electronegativity_dict = {
@@ -103,6 +137,17 @@ def create_atom_features(smiles_list, features_dict=None):
     }
 
     additional_features = features_dict.keys() if features_dict else []
+    
+    # Print feature information
+    base_dim = get_base_feature_dimension()
+    additional_dim = len(additional_features)
+    total_dim = base_dim + additional_dim
+    
+    print(f"Feature dimensions: Base={base_dim}, Additional={additional_dim}, Total={total_dim}")
+    if additional_features:
+        print(f"Additional features: {', '.join(additional_features)}")
+    else:
+        print("Using only base molecular features (no additional global features)")
     
     x = []
     for di, smiles in enumerate(smiles_list):
@@ -139,7 +184,7 @@ def create_atom_features(smiles_list, features_dict=None):
         total_electronegativity = sum(electronegativity_dict.get(atom.GetAtomicNum(), 0) for atom in mol.GetAtoms())
         general_electronegativity = total_electronegativity / num_atoms if num_atoms > 0 else 0
         
-        # Combine global features
+        # Combine global features (12 features)
         global_features = [
             min_degree,
             num_hbond_donors,
@@ -157,30 +202,30 @@ def create_atom_features(smiles_list, features_dict=None):
         
         # Iterate through each atom in the molecule
         for atom in mol.GetAtoms():
-            # Define atom features
+            # Define per-atom and per-molecule features (16 features total)
             features = [
-                is_in_ring,
-                is_aromatic,
-                formal_charge,
-                int(atom.GetDegree()),
-                int(atom.GetAtomicNum()),
-                int(atom.GetTotalNumHs()),
-                int(atom.GetTotalValence()),
-                int(atom.GetNumRadicalElectrons()),
-                int(atom.GetFormalCharge()),
-                int(atom.GetHybridization()),
-                int((atom.GetMass() - 10.812) / 116.092),
-                int((atom.GetAtomicNum() - 1.5) / 0.6),
-                int((atom.GetAtomicNum() - 0.64) / 0.76),
-                electronegativity_dict.get(atom.GetAtomicNum(), 0),
-                int(atom.GetAtomicNum() in electronegativity_dict),
-                int(atom.GetNumImplicitHs() > 0),
+                is_in_ring,                                          # 1 (per-molecule)
+                is_aromatic,                                         # 2 (per-molecule) 
+                formal_charge,                                       # 3 (per-molecule)
+                int(atom.GetDegree()),                              # 4 (per-atom)
+                int(atom.GetAtomicNum()),                           # 5 (per-atom)
+                int(atom.GetTotalNumHs()),                          # 6 (per-atom)
+                int(atom.GetTotalValence()),                        # 7 (per-atom)
+                int(atom.GetNumRadicalElectrons()),                 # 8 (per-atom)
+                int(atom.GetFormalCharge()),                        # 9 (per-atom)
+                int(atom.GetHybridization()),                       # 10 (per-atom)
+                int((atom.GetMass() - 10.812) / 116.092),          # 11 (per-atom)
+                int((atom.GetAtomicNum() - 1.5) / 0.6),            # 12 (per-atom)
+                int((atom.GetAtomicNum() - 0.64) / 0.76),          # 13 (per-atom)
+                electronegativity_dict.get(atom.GetAtomicNum(), 0), # 14 (per-atom)
+                int(atom.GetAtomicNum() in electronegativity_dict), # 15 (per-atom)
+                int(atom.GetNumImplicitHs() > 0),                   # 16 (per-atom)
             ]
             
-            # Add global features (these are the same for every atom in the molecule)
+            # Add global features (these are the same for every atom in the molecule) (12 features)
             features.extend(global_features)
             
-            # Add hydroxyl group feature
+            # Add hydroxyl group feature (1 feature)
             if atom.GetSymbol() == 'O' and any(neighbor.GetSymbol() == 'H' for neighbor in atom.GetNeighbors()):
                 features.append(1)  # Hydroxyl group (-OH) presence
             else:
