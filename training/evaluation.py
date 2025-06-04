@@ -113,6 +113,9 @@ def evaluate_model_with_nodes(model, data_loader, criterion, device):
     all_node_batch_indices = []
     all_targets = []
     
+    # Keep track of global molecule index offset
+    global_molecule_offset = 0
+    
     with torch.no_grad():
         # Add progress bar for evaluation
         for batch in tqdm(data_loader, desc="Evaluating", leave=False):
@@ -129,31 +132,37 @@ def evaluate_model_with_nodes(model, data_loader, criterion, device):
             all_graph_predictions.extend(graph_outputs.cpu().numpy())
             all_node_predictions.extend(node_outputs.cpu().numpy())
             
-            # Check if batch is the entire dataset (no batching mode)
+            # Handle batch indices correctly for multiple batches
             if hasattr(batch, 'batch') and batch.batch is not None:
-                all_node_batch_indices.extend(batch.batch.cpu().numpy())
+                # Adjust batch indices to be global indices
+                local_batch_indices = batch.batch.cpu().numpy()
+                global_batch_indices = local_batch_indices + global_molecule_offset
+                all_node_batch_indices.extend(global_batch_indices)
             else:
                 # If no batching is used, create batch indices manually
-                # Assign each node to its corresponding graph index
-                graph_sizes = []
-                idx = 0
-                for graph_idx, _ in enumerate(targets):
-                    # Get number of nodes in this graph
-                    if idx < len(node_outputs):
-                        # Count forward until we find the start of the next graph
-                        nodes_count = 0
-                        while idx + nodes_count < len(node_outputs):
-                            nodes_count += 1
-                        graph_sizes.append(nodes_count)
-                        idx += nodes_count
+                # This happens when batch_size >= dataset size
+                num_nodes_per_graph = []
+                current_node = 0
                 
-                # Create batch indices based on graph sizes
-                batch_indices = []
-                for graph_idx, size in enumerate(graph_sizes):
-                    batch_indices.extend([graph_idx] * size)
-                all_node_batch_indices.extend(batch_indices)
+                for graph_idx in range(batch.num_graphs):
+                    # Count nodes for this graph by finding where the next graph starts
+                    # or if we're at the last graph, count remaining nodes
+                    if graph_idx < batch.num_graphs - 1:
+                        # Find next graph's first node (this is approximate)
+                        nodes_in_this_graph = len(node_outputs) // batch.num_graphs
+                    else:
+                        # Last graph gets remaining nodes
+                        nodes_in_this_graph = len(node_outputs) - current_node
+                    
+                    # Create batch indices for this graph
+                    graph_batch_indices = [global_molecule_offset + graph_idx] * nodes_in_this_graph
+                    all_node_batch_indices.extend(graph_batch_indices)
+                    current_node += nodes_in_this_graph
                 
             all_targets.extend(targets.cpu().numpy())
+            
+            # Update global molecule offset for next batch
+            global_molecule_offset += batch.num_graphs
     
     avg_loss = total_loss / len(data_loader.dataset)
     avg_rmse = total_rmse / len(data_loader.dataset)
