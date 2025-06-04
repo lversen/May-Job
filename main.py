@@ -49,6 +49,16 @@ FEATURE_FILES = [
     'volumes.csv'
 ]
 
+# Global features that can be disabled
+GLOBAL_FEATURES = [
+    'angles',
+    'dipole_momentum',
+    'widths',
+    'lengths',
+    'heights',
+    'volumes'
+]
+
 
 def parse_args():
     """
@@ -68,9 +78,16 @@ def parse_args():
     parser.add_argument('--smiles_column', type=str, default=None,
                       help='Name of the SMILES column in the data file (overrides default)')
     
+    # Feature control parameters
+    parser.add_argument('--disable_global_features', action='store_true',
+                      help='Disable global molecular features (angles, dipole_momentum, widths, lengths, heights, volumes)')
+    parser.add_argument('--exclude_features', nargs='*', 
+                      choices=GLOBAL_FEATURES,
+                      help='Specific global features to exclude (e.g., --exclude_features angles volumes)')
+    
     # Model parameters
     parser.add_argument('--feature_dim', type=int, default=35,
-                      help='Dimension of atom features')
+                      help='Dimension of atom features (will be automatically adjusted if global features are disabled)')
     parser.add_argument('--hidden_dim', type=int, default=64,
                       help='Dimension of hidden layers')
     parser.add_argument('--heads', type=int, default=1,
@@ -108,13 +125,15 @@ def parse_args():
     return parser.parse_args()
 
 
-def find_dataset_files(dataset, data_dir):
+def find_dataset_files(dataset, data_dir, disable_global_features=False, exclude_features=None):
     """
     Find all relevant files for the specified dataset.
     
     Parameters:
     - dataset: Name of the dataset
     - data_dir: Base directory containing dataset folders
+    - disable_global_features: Whether to disable all global features
+    - exclude_features: List of specific features to exclude
     
     Returns:
     - dict: Dictionary containing all file paths
@@ -148,14 +167,44 @@ def find_dataset_files(dataset, data_dir):
         if potential_files:
             result['data_file'] = potential_files[0]
     
-    # Find feature files
-    for feature_file in FEATURE_FILES:
-        feature_path = os.path.join(csvs_path, feature_file)
-        if os.path.exists(feature_path):
+    # Find feature files (skip if global features are disabled)
+    if not disable_global_features:
+        exclude_features = exclude_features or []
+        
+        for feature_file in FEATURE_FILES:
             feature_name = os.path.splitext(feature_file)[0]  # Remove the .csv extension
-            result['feature_files'][feature_name] = feature_path
+            
+            # Skip excluded features
+            if feature_name in exclude_features:
+                continue
+                
+            feature_path = os.path.join(csvs_path, feature_file)
+            if os.path.exists(feature_path):
+                result['feature_files'][feature_name] = feature_path
     
     return result
+
+
+def calculate_feature_dimension(features_dict):
+    """
+    Calculate the actual feature dimension based on loaded features.
+    
+    Parameters:
+    - features_dict: Dictionary of loaded features
+    
+    Returns:
+    - int: Total feature dimension
+    """
+    from data.preprocessing import get_base_feature_dimension
+    
+    # Get base features dimension
+    base_features = get_base_feature_dimension()
+    
+    # Add additional global features count
+    additional_features_count = len(features_dict) if features_dict else 0
+    
+    # The actual dimension includes base atom features + additional global features
+    return base_features + additional_features_count
 
 
 def main():
@@ -176,22 +225,43 @@ def main():
     
     # Set up output directory
     output_dir = os.path.join(args.output_dir, args.dataset)
+    
+    # Add feature configuration to output directory name
+    if args.disable_global_features:
+        output_dir += "_no_global_features"
+    elif args.exclude_features:
+        excluded_str = "_exclude_" + "_".join(args.exclude_features)
+        output_dir += excluded_str
+    
     os.makedirs(output_dir, exist_ok=True)
     
     print("=" * 50)
     print(f"{dataset_config['description']} Prediction - Starting at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    if args.disable_global_features:
+        print("RUNNING WITHOUT GLOBAL FEATURES")
+    elif args.exclude_features:
+        print(f"EXCLUDING FEATURES: {', '.join(args.exclude_features)}")
     print("=" * 50)
     
     # Find dataset files
-    files = find_dataset_files(args.dataset, args.data_dir)
+    files = find_dataset_files(args.dataset, args.data_dir, 
+                             args.disable_global_features, 
+                             args.exclude_features)
     
     if files['data_file'] is None:
         raise FileNotFoundError(f"Could not find data file for dataset: {args.dataset}")
     
     print(f"Using data file: {files['data_file']}")
-    print(f"Found {len(files['feature_files'])} feature files:")
-    for feature, file_path in files['feature_files'].items():
-        print(f"  - {feature}: {file_path}")
+    
+    if args.disable_global_features:
+        print("Global features disabled - using only atom-level features")
+    else:
+        print(f"Found {len(files['feature_files'])} feature files:")
+        for feature, file_path in files['feature_files'].items():
+            print(f"  - {feature}: {file_path}")
+        
+        if args.exclude_features:
+            print(f"Excluded features: {', '.join(args.exclude_features)}")
     
     # Display batch size setting
     if args.batch_size <= 0:
@@ -213,12 +283,23 @@ def main():
     # Load data with additional feature files
     df, features_dict = load_data(files['data_file'], files['feature_files'])
     
+    # Calculate actual feature dimension
+    actual_feature_dim = calculate_feature_dimension(features_dict)
+    
+    # Override user-specified feature_dim if it doesn't match
+    if args.feature_dim != actual_feature_dim:
+        print(f"Adjusting feature dimension from {args.feature_dim} to {actual_feature_dim} based on loaded features")
+        feature_dim = actual_feature_dim
+    else:
+        feature_dim = args.feature_dim
+    
     # Determine SMILES column - command line arg overrides config
     smiles_column = args.smiles_column if args.smiles_column else dataset_config['smiles_column']
     
     # Display column info
     print(f"Target column: '{dataset_config['target_column']}'")
     print(f"SMILES column: '{smiles_column}'")
+    print(f"Feature dimension: {feature_dim}")
     
     # Check if the SMILES column exists
     if smiles_column not in df.columns:
@@ -260,7 +341,7 @@ def main():
         epochs=args.epochs,
         batch_size=args.batch_size,
         lr=args.lr,
-        feature_dim=args.feature_dim,
+        feature_dim=feature_dim,  # Use calculated feature dimension
         hidden_dim=args.hidden_dim,
         early_stopping_patience=int(args.epochs/10),
         heads=args.heads,
@@ -268,7 +349,7 @@ def main():
         base_dir=output_dir,
         device_str=args.device,
         clip_grad_norm=args.clip_grad_norm,
-        use_lr_scheduler=args.use_lr_scheduler  # Add this line
+        use_lr_scheduler=args.use_lr_scheduler
     )
         
     # Create animated GIFs from the training visualizations if requested
