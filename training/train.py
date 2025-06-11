@@ -4,45 +4,90 @@ import random
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.nn.utils import clip_grad_norm_  # Add this import
+from torch.nn.utils import clip_grad_norm_
 from datetime import datetime
 from torch_geometric.loader import DataLoader
 import numpy as np 
-from tqdm import tqdm  # Import tqdm for progress bars
+from tqdm import tqdm
 
 from .evaluation import *
 from visualization.visualize import visualize_results
 from utils.helpers import get_device
 
 
+def get_node_predictions_for_graphs(node_preds, batch, node_selection='last'):
+    """
+    Extract graph-level predictions from node predictions based on selection strategy.
+    
+    Parameters:
+    - node_preds: Node-level predictions
+    - batch: Batch indices for nodes
+    - node_selection: Strategy for selecting nodes ('last', 'first', 'mean')
+    
+    Returns:
+    - graph_preds: Graph-level predictions
+    """
+    batch_size = batch.max().item() + 1
+    graph_preds = []
+    
+    for i in range(batch_size):
+        # Get nodes for this graph
+        mask = batch == i
+        graph_node_preds = node_preds[mask]
+        
+        if node_selection == 'last':
+            # Use the last node (as per paper for ESOL/FreeSolv)
+            selected_pred = graph_node_preds[-1]
+        elif node_selection == 'first':
+            # Use the first node
+            selected_pred = graph_node_preds[0]
+        elif node_selection == 'mean':
+            # Use mean pooling
+            selected_pred = graph_node_preds.mean(dim=0)
+        else:
+            # Default to mean pooling
+            selected_pred = graph_node_preds.mean(dim=0)
+        
+        graph_preds.append(selected_pred)
+    
+    return torch.stack(graph_preds)
+
+
 def train_lipophilicity_model(data_list, smiles_list, 
                              epochs=5000, 
                              batch_size=128,
                              lr=0.001,
-                             feature_dim=35, 
-                             hidden_dim=64, 
+                             feature_dim=36, 
+                             hidden_dim=28, 
                              early_stopping_patience=500,
-                             heads=4,
-                             dropout=0.2,
+                             heads=1,
+                             dropout=0,
                              base_dir="",
                              device_str=None,
-                             use_lr_scheduler=True):
+                             use_lr_scheduler=True,
+                             use_no_pooling=False,
+                             pooling_strategy='mean',
+                             clip_grad_norm=1.0):
     """
-    Train a lipophilicity prediction model with logging similar to the stable version.
+    Train the TChemGNN model aligned with the paper specifications.
     
     Parameters:
     - data_list: List of PyTorch Geometric Data objects
     - smiles_list: List of SMILES strings
-    - epochs: Maximum number of training epochs
-    - batch_size: Batch size for training (0 means no batching - use full dataset)
-    - lr: Learning rate
-    - feature_dim: Dimension of atom features
-    - hidden_dim: Dimension of hidden layers
+    - epochs: Maximum number of training epochs (5000 in paper)
+    - batch_size: Batch size for training
+    - lr: Learning rate (paper uses RMSprop optimizer)
+    - feature_dim: Dimension of atom features (36 in paper)
+    - hidden_dim: Dimension of hidden layers (28 in paper)
     - early_stopping_patience: Number of epochs to wait before early stopping
-    - heads: Number of attention heads in GAT
-    - dropout: Dropout probability
+    - heads: Number of attention heads in GAT (1 in paper)
+    - dropout: Dropout probability (0 in paper)
     - base_dir: Base directory for outputs
-    - device_str: Optional string to specify device ('cpu', 'cuda', 'cuda:0', etc.)
+    - device_str: Optional string to specify device
+    - use_lr_scheduler: Whether to use learning rate scheduler
+    - use_no_pooling: Whether to use no-pooling approach (True for ESOL/FreeSolv)
+    - pooling_strategy: Strategy for pooling ('mean', 'last', 'first')
+    - clip_grad_norm: Maximum gradient norm for clipping (0 to disable)
     
     Returns:
     - model: Trained model
@@ -86,7 +131,7 @@ def train_lipophilicity_model(data_list, smiles_list,
     os.makedirs(results_dir, exist_ok=True)
     os.makedirs(checkpoints_dir, exist_ok=True)
 
-    # Split data into training, validation and testing sets
+    # Split data into training, validation and testing sets (80/10/10 as per paper)
     train_size = int(0.8 * len(data_list))
     val_size = int(0.1 * len(data_list))
     
@@ -102,23 +147,12 @@ def train_lipophilicity_model(data_list, smiles_list,
     val_data = [data_list[i] for i in val_indices]
     test_data = [data_list[i] for i in test_indices]
     
-    # Handle batch_size=0 (no batching) case
-    if batch_size <= 0:
-        print("Batch size set to 0 or negative value - using full dataset (no batching)")
-        train_batch_size = len(train_data)
-        val_batch_size = len(val_data)
-        test_batch_size = len(test_data)
-    else:
-        train_batch_size = batch_size
-        val_batch_size = batch_size
-        test_batch_size = batch_size
+    # Create DataLoaders
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_data, batch_size=batch_size)
+    test_loader = DataLoader(test_data, batch_size=batch_size)
     
-    # Create DataLoaders with appropriate batch sizes
-    train_loader = DataLoader(train_data, batch_size=train_batch_size, shuffle=True)
-    val_loader = DataLoader(val_data, batch_size=val_batch_size)
-    test_loader = DataLoader(test_data, batch_size=test_batch_size)
-    
-    # Create model, optimizer, and loss function
+    # Create model aligned with paper architecture
     from models.gsr import GSR
     model = GSR(in_channels=feature_dim, 
                 hidden_channels=hidden_dim, 
@@ -126,6 +160,7 @@ def train_lipophilicity_model(data_list, smiles_list,
                 heads=heads, 
                 dropout=dropout).to(device)
     
+    # Use RMSprop optimizer as specified in the paper
     optimizer = optim.RMSprop(model.parameters(), lr=lr)
     
     # Learning rate scheduler
@@ -134,18 +169,29 @@ def train_lipophilicity_model(data_list, smiles_list,
         print("Using ReduceLROnPlateau learning rate scheduler")
     else:
         scheduler = None
-        print("Learning rate scheduler disabled, using fixed learning rate")
+        print("Learning rate scheduler disabled")
     
     criterion = nn.MSELoss()
+    
+    # Determine node selection strategy
+    if pooling_strategy == 'last':
+        node_selection = 'last'
+        print("Using last node prediction (no pooling)")
+    elif pooling_strategy == 'first':
+        node_selection = 'first'
+        print("Using first node prediction")
+    else:
+        node_selection = 'mean'
+        print("Using mean pooling")
     
     # Initialize variables for early stopping
     best_val_loss = float('inf')
     early_stopping_counter = 0
     best_epoch = 0
     
-    # Training loop with tqdm progress bar
+    # Training loop
     print(f"Starting training for {epochs} epochs...")
-    print(f"Using {'full dataset (no batching)' if batch_size <= 0 else f'batch size of {batch_size}'}")
+    print(f"Pooling strategy: {pooling_strategy}")
     pbar = tqdm(range(1, epochs + 1), desc="Training Progress", position=0)
     
     for epoch in pbar:
@@ -154,22 +200,32 @@ def train_lipophilicity_model(data_list, smiles_list,
         train_loss = 0
         train_rmse = 0
         
-        # Progress bar for batches (optional, can be disabled for cleaner output)
-        # batch_pbar = tqdm(train_loader, desc=f"Epoch {epoch}", leave=False, position=1) 
-        # for batch in batch_pbar:
         for batch in train_loader:
             batch = batch.to(device)
             optimizer.zero_grad()
             
-            _, graph_output = model(batch)  # Ignore node predictions during training
-            loss = criterion(graph_output, batch.y)
+            node_outputs, graph_outputs = model(batch)
+            
+            # Use appropriate pooling strategy
+            if node_selection != 'mean':
+                # For no-pooling approaches, extract predictions differently
+                graph_outputs = get_node_predictions_for_graphs(
+                    node_outputs, batch.batch, node_selection
+                )
+            
+            loss = criterion(graph_outputs, batch.y)
             
             loss.backward()
+            
+            # Gradient clipping if specified
+            if clip_grad_norm > 0:
+                clip_grad_norm_(model.parameters(), clip_grad_norm)
+            
             optimizer.step()
             
             # Calculate RMSE
             from .evaluation import compute_rmse
-            batch_rmse = compute_rmse(graph_output, batch.y)
+            batch_rmse = compute_rmse(graph_outputs, batch.y)
             
             train_loss += loss.item() * batch.num_graphs
             train_rmse += batch_rmse.item() * batch.num_graphs
@@ -179,13 +235,35 @@ def train_lipophilicity_model(data_list, smiles_list,
         avg_train_rmse = train_rmse / len(train_loader.dataset)
 
         # Evaluate on validation set
-        val_loss, val_rmse, val_graph_preds, _, _, _ = evaluate_model_with_nodes(model, val_loader, criterion, device)
+        model.eval()
+        val_loss = 0
+        val_rmse = 0
         
-        # Update learning rate scheduler (conditionally)
+        with torch.no_grad():
+            for batch in val_loader:
+                batch = batch.to(device)
+                node_outputs, graph_outputs = model(batch)
+                
+                # Use appropriate pooling strategy
+                if node_selection != 'mean':
+                    graph_outputs = get_node_predictions_for_graphs(
+                        node_outputs, batch.batch, node_selection
+                    )
+                
+                loss = criterion(graph_outputs, batch.y)
+                rmse = compute_rmse(graph_outputs, batch.y)
+                
+                val_loss += loss.item() * batch.num_graphs
+                val_rmse += rmse.item() * batch.num_graphs
+        
+        val_loss = val_loss / len(val_loader.dataset)
+        val_rmse = val_rmse / len(val_loader.dataset)
+        
+        # Update learning rate scheduler
         if use_lr_scheduler:
             scheduler.step(val_loss)
             
-        # Log metrics at every epoch (NEW CODE)
+        # Log metrics at every epoch
         log_metrics_to_csv(epoch, avg_train_loss, avg_train_rmse, val_loss, val_rmse, log_dir=log_dir)
         
         # Check for early stopping
@@ -215,7 +293,7 @@ def train_lipophilicity_model(data_list, smiles_list,
             pbar.write(f"Early stopping triggered after {epoch} epochs")
             break
         
-        # Log detailed metrics every 50 epochs (to match stable version)
+        # Log detailed metrics every 50 epochs
         if epoch % 50 == 0:
             model.eval()
             
@@ -227,39 +305,27 @@ def train_lipophilicity_model(data_list, smiles_list,
             with torch.no_grad():
                 # Testing
                 test_loss = 0
-                total_test_rmse = 0
-                all_test_preds = []
-                all_test_targets = []
+                test_rmse = 0
                 
-                test_pbar = tqdm(enumerate(test_loader), total=len(test_loader), 
-                                desc=f"Testing (Epoch {epoch})", leave=False)
-                for i, data_batch in test_pbar:
-                    data_batch = data_batch.to(device)
-                    _, y_pred = model(data_batch)
-                    batch_test_loss = criterion(y_pred, data_batch.y)
-                    test_loss += batch_test_loss.item() * data_batch.num_graphs
+                for batch in test_loader:
+                    batch = batch.to(device)
+                    node_outputs, graph_outputs = model(batch)
+                    
+                    # Use appropriate pooling strategy
+                    if node_selection != 'mean':
+                        graph_outputs = get_node_predictions_for_graphs(
+                            node_outputs, batch.batch, node_selection
+                        )
+                    
+                    batch_test_loss = criterion(graph_outputs, batch.y)
+                    test_loss += batch_test_loss.item() * batch.num_graphs
                     
                     # Calculate RMSE for test
-                    test_rmse = compute_rmse(y_pred, data_batch.y)
-                    total_test_rmse += test_rmse.item() * data_batch.num_graphs
-                    
-                    # Print RMSE and loss for each element in the test set (like stable version)
-                    for j in range(data_batch.num_graphs):
-                        sample_test_pred = y_pred[j].cpu().numpy()
-                        sample_test_target = data_batch.y[j].cpu().numpy()
-                        all_test_preds.append(sample_test_pred)
-                        all_test_targets.append(sample_test_target)
-                        
-                        # Calculate individual test loss and RMSE for this sample
-                        ind_test_loss = ((sample_test_pred - sample_test_target) ** 2).mean()
-                        ind_test_rmse = np.sqrt(ind_test_loss)
-                        
-                        if j == 0:  # Only print for the first element to avoid clutter
-                            test_pbar.write(f"element {i*test_batch_size+j}, Epoch {epoch}: "
-                                          f"Test Loss: {ind_test_loss:.4f}, Test RMSE: {ind_test_rmse:.4f}")
+                    test_rmse_val = compute_rmse(graph_outputs, batch.y)
+                    test_rmse += test_rmse_val.item() * batch.num_graphs
                 
                 avg_test_loss = test_loss / len(test_loader.dataset)
-                avg_test_rmse = total_test_rmse / len(test_loader.dataset)
+                avg_test_rmse = test_rmse / len(test_loader.dataset)
                 pbar.write(f"Epoch {epoch} - Test Loss: {avg_test_loss:.4f}, Test RMSE: {avg_test_rmse:.4f}")
                 
                 # Update metrics CSV with test metrics
@@ -269,23 +335,18 @@ def train_lipophilicity_model(data_list, smiles_list,
             # Get full dataset predictions for logging and visualization
             pbar.write(f"Generating visualizations for epoch {epoch}...")
             
-            # Create progress bars for the evaluation steps
-            with tqdm(total=3, desc="Evaluating datasets", leave=False) as eval_pbar:
-                # Use same batch_size logic for evaluation
-                _, _, train_graph_preds, train_node_preds, train_node_batch, train_targets = evaluate_model_with_nodes(
-                    model, DataLoader(train_data, batch_size=train_batch_size), criterion, device
-                )
-                eval_pbar.update(1)
-                
-                _, _, val_graph_preds, val_node_preds, val_node_batch, val_targets = evaluate_model_with_nodes(
-                    model, DataLoader(val_data, batch_size=val_batch_size), criterion, device
-                )
-                eval_pbar.update(1)
-                
-                _, _, test_graph_preds, test_node_preds, test_node_batch, test_targets = evaluate_model_with_nodes(
-                    model, DataLoader(test_data, batch_size=test_batch_size), criterion, device
-                )
-                eval_pbar.update(1)
+            # Evaluate and log predictions
+            _, _, train_graph_preds, train_node_preds, train_node_batch, train_targets = evaluate_model_with_nodes(
+                model, DataLoader(train_data, batch_size=batch_size), criterion, device
+            )
+            
+            _, _, val_graph_preds, val_node_preds, val_node_batch, val_targets = evaluate_model_with_nodes(
+                model, DataLoader(val_data, batch_size=batch_size), criterion, device
+            )
+            
+            _, _, test_graph_preds, test_node_preds, test_node_batch, test_targets = evaluate_model_with_nodes(
+                model, DataLoader(test_data, batch_size=batch_size), criterion, device
+            )
             
             # Log detailed predictions to CSV
             log_to_csv(
@@ -298,9 +359,7 @@ def train_lipophilicity_model(data_list, smiles_list,
             log_node_predictions_to_csv(train_node_preds, train_node_batch, train_targets, smiles_list, train_indices, epoch_dir, 'train')
             log_node_predictions_to_csv(val_node_preds, val_node_batch, val_targets, smiles_list, val_indices, epoch_dir, 'val')
             log_node_predictions_to_csv(test_node_preds, test_node_batch, test_targets, smiles_list, test_indices, epoch_dir, 'test')
-            log_molecule_atom_predictions_to_csv(train_node_preds, train_node_batch, train_targets, train_indices, epoch_dir, epoch)
-            log_molecule_atom_predictions_to_csv(val_node_preds, val_node_batch, val_targets, val_indices, epoch_dir, epoch)
-            log_molecule_atom_predictions_to_csv(test_node_preds, test_node_batch, test_targets, test_indices, epoch_dir, epoch)
+            
             # Visualize results
             visualize_results(log_dir, results_dir, epoch)
             pbar.write(f"Completed visualizations for epoch {epoch}")
@@ -310,39 +369,27 @@ def train_lipophilicity_model(data_list, smiles_list,
     # Load the best model
     model.load_state_dict(torch.load(os.path.join(checkpoints_dir, 'best_model.pt')))
     
-    # Final evaluation with node predictions
+    # Final evaluation
     print("\nPerforming final evaluation on the best model...")
-    with tqdm(total=3, desc="Final Evaluation", position=0) as final_pbar:
-        train_loss, train_rmse, train_graph_preds, train_node_preds, train_node_batch, train_targets = evaluate_model_with_nodes(
-            model, DataLoader(train_data, batch_size=train_batch_size), criterion, device
-        )
-        final_pbar.update(1)
-        
-        val_loss, val_rmse, val_graph_preds, val_node_preds, val_node_batch, val_targets = evaluate_model_with_nodes(
-            model, DataLoader(val_data, batch_size=val_batch_size), criterion, device
-        )
-        final_pbar.update(1)
-        
-        test_loss, test_rmse, test_graph_preds, test_node_preds, test_node_batch, test_targets = evaluate_model_with_nodes(
-            model, DataLoader(test_data, batch_size=test_batch_size), criterion, device
-        )
-        final_pbar.update(1)
+    
+    # Final evaluation code similar to above...
+    train_loss, train_rmse, _, _, _, _ = evaluate_model_with_nodes(
+        model, DataLoader(train_data, batch_size=batch_size), criterion, device
+    )
+    
+    val_loss, val_rmse, _, _, _, _ = evaluate_model_with_nodes(
+        model, DataLoader(val_data, batch_size=batch_size), criterion, device
+    )
+    
+    test_loss, test_rmse, _, _, _, _ = evaluate_model_with_nodes(
+        model, DataLoader(test_data, batch_size=batch_size), criterion, device
+    )
     
     print("\nFinal Evaluation (Best Model):")
     print(f"  Train Loss: {train_loss:.4f} | Train RMSE: {train_rmse:.4f}")
     print(f"  Val Loss: {val_loss:.4f} | Val RMSE: {val_rmse:.4f}")
     print(f"  Test Loss: {test_loss:.4f} | Test RMSE: {test_rmse:.4f}")
     
-    # Create final epoch directory and save final node predictions
-    final_dir = os.path.join(log_dir, f'epoch_final')
-    os.makedirs(final_dir, exist_ok=True)
-    
-    log_node_predictions_to_csv(train_node_preds, train_node_batch, train_targets, smiles_list, train_indices, final_dir, 'train')
-    log_node_predictions_to_csv(val_node_preds, val_node_batch, val_targets, smiles_list, val_indices, final_dir, 'val')
-    log_node_predictions_to_csv(test_node_preds, test_node_batch, test_targets, smiles_list, test_indices, final_dir, 'test')
-    log_molecule_atom_predictions_to_csv(train_node_preds, train_node_batch, train_targets, train_indices, final_dir, 'final')
-    log_molecule_atom_predictions_to_csv(val_node_preds, val_node_batch, val_targets, val_indices, final_dir, 'final')
-    log_molecule_atom_predictions_to_csv(test_node_preds, test_node_batch, test_targets, test_indices, final_dir, 'final')
     # Create final visualizations
     visualize_results(log_dir, results_dir, best_epoch)
     

@@ -16,58 +16,46 @@ DATASET_CONFIG = {
     'bace': {
         'data_file': 'bace.csv',
         'target_column': 'pIC50',
-        'smiles_column': 'mol',  # Add SMILES column name
-        'description': 'BACE Inhibition (pIC50)'
+        'smiles_column': 'mol',
+        'description': 'BACE Inhibition (pIC50)',
+        'use_no_pooling': False,  # Paper uses pooling for BACE
+        'expected_rmse': 0.9586
     },
     'esol': {
         'data_file': 'ESOL.csv',
         'target_column': 'measured log solubility in mols per litre',
-        'smiles_column': 'SMILES',  # Different SMILES column name for ESOL
-        'description': 'ESOL Solubility'
+        'smiles_column': 'SMILES',
+        'description': 'ESOL Solubility',
+        'use_no_pooling': True,  # Paper uses last node for ESOL
+        'expected_rmse': 0.7844
     },
-    'fsolv': {
-        'data_file': 'Fsolv.csv',
+    'freesolv': {  # Note: paper uses "FreeSolv" but we keep consistent naming
+        'data_file': 'FreeSolv.csv',
         'target_column': 'expt',
-        'smiles_column': 'smiles',  # Assuming FreeSolv uses 'SMILES'
-        'description': 'FreeSolv Hydration Free Energy'
+        'smiles_column': 'SMILES',
+        'description': 'FreeSolv Hydration Free Energy',
+        'use_no_pooling': True,  # Paper uses last node for FreeSolv
+        'expected_rmse': 1.0124
     },
     'lipophilicity': {
         'data_file': 'Lipophilicity!.csv',
         'target_column': 'exp',
         'smiles_column': 'smiles',
-        'description': 'Lipophilicity'
+        'description': 'Lipophilicity',
+        'use_no_pooling': False,  # Paper mentions mean pooling works slightly better
+        'expected_rmse': 1.0221
     }
 }
-
-# Feature file names to look for
-FEATURE_FILES = [
-    'angles.csv',
-    'dipole_momentum.csv',
-    'widths.csv',
-    'lengths.csv',
-    'heights.csv',
-    'volumes.csv'
-]
-
-# Global features that can be disabled
-GLOBAL_FEATURES = [
-    'angles',
-    'dipole_momentum',
-    'widths',
-    'lengths',
-    'heights',
-    'volumes'
-]
 
 
 def parse_args():
     """
-    Parse command line arguments.
+    Parse command line arguments aligned with paper specifications.
     
     Returns:
     - args: Parsed arguments
     """
-    parser = argparse.ArgumentParser(description='Molecular Property Prediction with Graph Neural Networks')
+    parser = argparse.ArgumentParser(description='TChemGNN: Molecular Property Prediction with Graph Neural Networks')
     
     # Dataset parameters
     parser.add_argument('--dataset', type=str, required=True, 
@@ -78,38 +66,37 @@ def parse_args():
     parser.add_argument('--smiles_column', type=str, default=None,
                       help='Name of the SMILES column in the data file (overrides default)')
     
-    # Feature control parameters
-    parser.add_argument('--disable_global_features', action='store_true',
-                      help='Disable global molecular features (angles, dipole_momentum, widths, lengths, heights, volumes)')
-    parser.add_argument('--exclude_features', nargs='*', 
-                      choices=GLOBAL_FEATURES,
-                      help='Specific global features to exclude (e.g., --exclude_features angles volumes)')
-    
-    # Model parameters
-    parser.add_argument('--feature_dim', type=int, default=35,
-                      help='Dimension of atom features (will be automatically adjusted if global features are disabled)')
-    parser.add_argument('--hidden_dim', type=int, default=64,
-                      help='Dimension of hidden layers')
+    # Model parameters (aligned with paper)
+    parser.add_argument('--feature_dim', type=int, default=36,
+                      help='Dimension of atom features (36 in paper: 14 atomic + 22 molecular)')
+    parser.add_argument('--hidden_dim', type=int, default=28,
+                      help='Dimension of hidden layers (28 gives best results in paper)')
     parser.add_argument('--heads', type=int, default=1,
-                      help='Number of attention heads in GAT')
+                      help='Number of attention heads in GAT (1 in paper)')
     parser.add_argument('--dropout', type=float, default=0,
-                      help='Dropout probability')
+                      help='Dropout probability (0 in paper)')
     
-    # Training parameters
+    # Pooling strategy
+    parser.add_argument('--pooling_strategy', type=str, default='auto',
+                      choices=['auto', 'mean', 'last_node', 'first_node'],
+                      help='Pooling strategy: auto (dataset-specific), mean, last_node, first_node')
+    
+    # Training parameters (aligned with paper)
     parser.add_argument('--batch_size', type=int, default=16,
-                      help='Batch size for training (0 means no batching - full dataset)')
+                      help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=5000,
-                      help='Maximum number of epochs')
+                      help='Maximum number of epochs (5000 in paper)')
     parser.add_argument('--lr', type=float, default=0.00075,
-                      help='Learning rate')
+                      help='Learning rate (paper mentions RMSprop optimizer)')
     parser.add_argument('--seed', type=int, default=42,
                       help='Random seed for reproducibility')
     parser.add_argument('--clip_grad_norm', type=float, default=1.0,
                       help='Maximum gradient norm for gradient clipping (0 to disable)')
     parser.add_argument('--use_lr_scheduler', action='store_true', default=True,
-                    help='Use learning rate scheduler (ReduceLROnPlateau)')
+                      help='Use learning rate scheduler (ReduceLROnPlateau)')
     parser.add_argument('--no_lr_scheduler', action='store_false', dest='use_lr_scheduler',
-                    help='Disable learning rate scheduler')
+                      help='Disable learning rate scheduler')
+    
     # Device parameter
     parser.add_argument('--device', type=str, default=None,
                       help='Device to use (e.g. "cpu", "cuda", "cuda:0"). If not specified, will use CUDA if available.')
@@ -118,22 +105,20 @@ def parse_args():
     parser.add_argument('--output_dir', type=str, default='output',
                       help='Base directory for outputs')
     
-    # Add new parameter for creating GIFs (optional feature)
+    # Visualization parameters
     parser.add_argument('--create_gifs', action='store_true',
                       help='Create animated GIFs from training visualizations')
     
     return parser.parse_args()
 
 
-def find_dataset_files(dataset, data_dir, disable_global_features=False, exclude_features=None):
+def find_dataset_files(dataset, data_dir):
     """
     Find all relevant files for the specified dataset.
     
     Parameters:
     - dataset: Name of the dataset
     - data_dir: Base directory containing dataset folders
-    - disable_global_features: Whether to disable all global features
-    - exclude_features: List of specific features to exclude
     
     Returns:
     - dict: Dictionary containing all file paths
@@ -152,7 +137,7 @@ def find_dataset_files(dataset, data_dir, disable_global_features=False, exclude
     
     result = {
         'data_file': None,
-        'feature_files': {}
+        'feature_files': {}  # Paper uses RDKit to compute 3D features on-the-fly
     }
     
     # Find the main data file
@@ -167,49 +152,12 @@ def find_dataset_files(dataset, data_dir, disable_global_features=False, exclude
         if potential_files:
             result['data_file'] = potential_files[0]
     
-    # Find feature files (skip if global features are disabled)
-    if not disable_global_features:
-        exclude_features = exclude_features or []
-        
-        for feature_file in FEATURE_FILES:
-            feature_name = os.path.splitext(feature_file)[0]  # Remove the .csv extension
-            
-            # Skip excluded features
-            if feature_name in exclude_features:
-                continue
-                
-            feature_path = os.path.join(csvs_path, feature_file)
-            if os.path.exists(feature_path):
-                result['feature_files'][feature_name] = feature_path
-    
     return result
-
-
-def calculate_feature_dimension(features_dict):
-    """
-    Calculate the actual feature dimension based on loaded features.
-    
-    Parameters:
-    - features_dict: Dictionary of loaded features
-    
-    Returns:
-    - int: Total feature dimension
-    """
-    from data.preprocessing import get_base_feature_dimension
-    
-    # Get base features dimension
-    base_features = get_base_feature_dimension()
-    
-    # Add additional global features count
-    additional_features_count = len(features_dict) if features_dict else 0
-    
-    # The actual dimension includes base atom features + additional global features
-    return base_features + additional_features_count
 
 
 def main():
     """
-    Main function to run the molecular property prediction model.
+    Main function to run the TChemGNN model aligned with the paper.
     """
     # Parse arguments
     args = parse_args()
@@ -226,72 +174,60 @@ def main():
     # Set up output directory
     output_dir = os.path.join(args.output_dir, args.dataset)
     
-    # Add feature configuration to output directory name
-    if args.disable_global_features:
-        output_dir += "_no_global_features"
-    elif args.exclude_features:
-        excluded_str = "_exclude_" + "_".join(args.exclude_features)
-        output_dir += excluded_str
+    # Add configuration info to output directory name
+    output_dir += f"_hidden{args.hidden_dim}"
+    if args.pooling_strategy != 'auto':
+        output_dir += f"_{args.pooling_strategy}"
     
     os.makedirs(output_dir, exist_ok=True)
     
     print("=" * 50)
-    print(f"{dataset_config['description']} Prediction - Starting at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    if args.disable_global_features:
-        print("RUNNING WITHOUT GLOBAL FEATURES")
-    elif args.exclude_features:
-        print(f"EXCLUDING FEATURES: {', '.join(args.exclude_features)}")
+    print(f"TChemGNN - {dataset_config['description']} Prediction")
+    print(f"Starting at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Expected RMSE from paper: {dataset_config['expected_rmse']}")
     print("=" * 50)
     
+    # Determine pooling strategy
+    if args.pooling_strategy == 'auto':
+        use_no_pooling = dataset_config['use_no_pooling']
+        pooling_strategy = 'last_node' if use_no_pooling else 'mean'
+        print(f"Using dataset-specific pooling strategy: {pooling_strategy}")
+    else:
+        pooling_strategy = args.pooling_strategy
+        use_no_pooling = pooling_strategy != 'mean'
+        print(f"Using user-specified pooling strategy: {pooling_strategy}")
+    
     # Find dataset files
-    files = find_dataset_files(args.dataset, args.data_dir, 
-                             args.disable_global_features, 
-                             args.exclude_features)
+    files = find_dataset_files(args.dataset, args.data_dir)
     
     if files['data_file'] is None:
         raise FileNotFoundError(f"Could not find data file for dataset: {args.dataset}")
     
     print(f"Using data file: {files['data_file']}")
     
-    if args.disable_global_features:
-        print("Global features disabled - using only atom-level features")
-    else:
-        print(f"Found {len(files['feature_files'])} feature files:")
-        for feature, file_path in files['feature_files'].items():
-            print(f"  - {feature}: {file_path}")
-        
-        if args.exclude_features:
-            print(f"Excluded features: {', '.join(args.exclude_features)}")
+    # Display model configuration
+    print(f"\nModel Configuration (TChemGNN):")
+    print(f"  Feature dimension: {args.feature_dim} (14 atomic + 22 molecular)")
+    print(f"  Hidden dimension: {args.hidden_dim}")
+    print(f"  Number of GAT layers: 5")
+    print(f"  Attention heads: {args.heads}")
+    print(f"  Activation: tanh")
+    print(f"  Dropout: {args.dropout}")
+    print(f"  Pooling: {pooling_strategy}")
     
-    # Display batch size setting
-    if args.batch_size <= 0:
-        print("\nRunning with NO batching (using full dataset)")
-    else:
-        print(f"\nBatch size: {args.batch_size}")
-    
-    # Display device setting
-    if args.device:
-        print(f"Device: {args.device}")
-    else:
-        print("Device: Auto (will use CUDA if available)")
-    
-    # Display gradient clipping setting
-    print(f"Gradient clipping norm: {args.clip_grad_norm}")
+    # Display training configuration
+    print(f"\nTraining Configuration:")
+    print(f"  Batch size: {args.batch_size}")
+    print(f"  Learning rate: {args.lr}")
+    print(f"  Optimizer: RMSprop")
+    print(f"  Max epochs: {args.epochs}")
+    print(f"  LR scheduler: {'Enabled' if args.use_lr_scheduler else 'Disabled'}")
+    print(f"  Device: {args.device if args.device else 'Auto (will use CUDA if available)'}")
     
     print("\nLoading data...")
     
-    # Load data with additional feature files
-    df, features_dict = load_data(files['data_file'], files['feature_files'])
-    
-    # Calculate actual feature dimension
-    actual_feature_dim = calculate_feature_dimension(features_dict)
-    
-    # Override user-specified feature_dim if it doesn't match
-    if args.feature_dim != actual_feature_dim:
-        print(f"Adjusting feature dimension from {args.feature_dim} to {actual_feature_dim} based on loaded features")
-        feature_dim = actual_feature_dim
-    else:
-        feature_dim = args.feature_dim
+    # Load data (no external feature files - all computed from SMILES)
+    df, _ = load_data(files['data_file'], None)
     
     # Determine SMILES column - command line arg overrides config
     smiles_column = args.smiles_column if args.smiles_column else dataset_config['smiles_column']
@@ -299,7 +235,6 @@ def main():
     # Display column info
     print(f"Target column: '{dataset_config['target_column']}'")
     print(f"SMILES column: '{smiles_column}'")
-    print(f"Feature dimension: {feature_dim}")
     
     # Check if the SMILES column exists
     if smiles_column not in df.columns:
@@ -321,13 +256,21 @@ def main():
     
     print(f"Loaded {len(smiles_list)} molecules")
     
+    # For lipophilicity dataset, remove problematic molecules as mentioned in paper
+    if args.dataset == 'lipophilicity':
+        print("Note: Paper mentions removing 2 molecules where RDKit couldn't compute 3D structure")
+    
     # Extract edge indices for graph construction
     print("Extracting molecular graph structures...")
     edge_index = extract_edge_indices(smiles_list)
     
-    # Create atom features
-    print("Creating atom features...")
-    x = create_atom_features(smiles_list, features_dict)
+    # Create atom features (with 3D features computed on-the-fly)
+    print("Creating atom features with 3D molecular properties...")
+    x = create_atom_features(smiles_list, features_dict=None)
+    
+    # Verify feature dimension
+    if len(x[0][0]) != args.feature_dim:
+        print(f"Warning: Expected {args.feature_dim} features but got {len(x[0][0])}")
     
     # Prepare data for training
     print("Preparing data for model...")
@@ -341,14 +284,17 @@ def main():
         epochs=args.epochs,
         batch_size=args.batch_size,
         lr=args.lr,
-        feature_dim=feature_dim,  # Use calculated feature dimension
+        feature_dim=args.feature_dim,
         hidden_dim=args.hidden_dim,
         early_stopping_patience=int(args.epochs/10),
         heads=args.heads,
         dropout=args.dropout,
         base_dir=output_dir,
         device_str=args.device,
-        use_lr_scheduler=args.use_lr_scheduler
+        use_lr_scheduler=args.use_lr_scheduler,
+        use_no_pooling=use_no_pooling,
+        pooling_strategy=pooling_strategy,
+        clip_grad_norm=args.clip_grad_norm
     )
         
     # Create animated GIFs from the training visualizations if requested
@@ -368,6 +314,7 @@ def main():
     print(f"Results saved to {results_dir}")
     print(f"Logs saved to {log_dir}")
     print(f"Model checkpoints saved to {checkpoints_dir}")
+    print(f"Expected RMSE from paper: {dataset_config['expected_rmse']}")
     print("=" * 50)
 
 
