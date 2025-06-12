@@ -57,7 +57,7 @@ def train_lipophilicity_model(data_list, smiles_list,
                              epochs=5000, 
                              batch_size=128,
                              lr=0.001,
-                             feature_dim=36, 
+                             feature_dim=35, 
                              hidden_dim=28, 
                              early_stopping_patience=500,
                              heads=1,
@@ -77,7 +77,7 @@ def train_lipophilicity_model(data_list, smiles_list,
     - epochs: Maximum number of training epochs (5000 in paper)
     - batch_size: Batch size for training
     - lr: Learning rate (paper uses RMSprop optimizer)
-    - feature_dim: Dimension of atom features (36 in paper)
+    - feature_dim: Dimension of atom features (35 in paper, logP excluded)
     - hidden_dim: Dimension of hidden layers (28 in paper)
     - early_stopping_patience: Number of epochs to wait before early stopping
     - heads: Number of attention heads in GAT (1 in paper)

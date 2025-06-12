@@ -18,12 +18,12 @@ class GSR(nn.Module):
     - ~3.7K learnable parameters
     """
     
-    def __init__(self, in_channels=36, hidden_channels=28, out_channels=1, heads=1, dropout=0):
+    def __init__(self, in_channels=35, hidden_channels=28, out_channels=1, heads=1, dropout=0):
         """
         Initialize the GSR model according to the paper specifications.
         
         Parameters:
-        - in_channels: Size of input features for each atom (36 in paper)
+        - in_channels: Size of input features for each atom (35 in paper, logP excluded)
         - hidden_channels: Size of hidden layer features (28 in paper)
         - out_channels: Size of output features (1 for regression)
         - heads: Number of attention heads in GATConv (1 in paper)
@@ -95,12 +95,12 @@ class GSRNoPooling(nn.Module):
     According to the paper, this works better for ESOL and FreeSolv datasets.
     """
     
-    def __init__(self, in_channels=36, hidden_channels=28, out_channels=1, heads=1, dropout=0):
+    def __init__(self, in_channels=35, hidden_channels=28, out_channels=1, heads=1, dropout=0):
         """
         Initialize the GSR no-pooling model.
         
         Parameters:
-        - in_channels: Size of input features for each atom (36 in paper)
+        - in_channels: Size of input features for each atom (35 in paper, logP excluded)
         - hidden_channels: Size of hidden layer features (28 in paper)  
         - out_channels: Size of output features (1 for regression)
         - heads: Number of attention heads in GATConv (1 in paper)

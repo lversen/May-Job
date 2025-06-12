@@ -67,8 +67,8 @@ def parse_args():
                       help='Name of the SMILES column in the data file (overrides default)')
     
     # Model parameters (aligned with paper)
-    parser.add_argument('--feature_dim', type=int, default=36,
-                      help='Dimension of atom features (36 in paper: 14 atomic + 22 molecular)')
+    parser.add_argument('--feature_dim', type=int, default=35,
+                      help='Dimension of atom features (35 in paper: 14 atomic + 21 molecular, logP excluded)')
     parser.add_argument('--hidden_dim', type=int, default=28,
                       help='Dimension of hidden layers (28 gives best results in paper)')
     parser.add_argument('--heads', type=int, default=1,
@@ -207,7 +207,7 @@ def main():
     
     # Display model configuration
     print(f"\nModel Configuration (TChemGNN):")
-    print(f"  Feature dimension: {args.feature_dim} (14 atomic + 22 molecular)")
+    print(f"  Feature dimension: {args.feature_dim} (14 atomic + 21 molecular, logP excluded)")
     print(f"  Hidden dimension: {args.hidden_dim}")
     print(f"  Number of GAT layers: 5")
     print(f"  Attention heads: {args.heads}")

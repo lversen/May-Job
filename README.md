@@ -4,9 +4,9 @@ This repository contains the implementation of **TChemGNN** (Tiny Chemistry Grap
 
 ## Key Changes to Align with Paper
 
-### 1. **Feature Engineering (36 total features)**
+### 1. **Feature Engineering (35 total features)**
    - **14 Atomic-Level Features**: atom_degree, atomic_number, num_hydrogens, atomic_valence, num_radical_electrons, atom_formal_charge, atom_hybridization, electronegativity, has_electronegativity, has_implicit_hydrogens, hydroxyl_group, atomic_mass_scaled, van_der_waals_radius_scaled, covalent_radius_scaled
-   - **16 Molecular-Level Features**: has_ring, is_aromatic, formal_charge, min_degree, num_hbond_donors, num_rings, num_rotatable_bonds, polar_surface_area, molecular_weight, logP, num_atoms, hba, hbd, fraction_sp2, valence, general_electronegativity
+   - **15 Molecular-Level Features**: has_ring, is_aromatic, formal_charge, min_degree, num_hbond_donors, num_rings, num_rotatable_bonds, polar_surface_area, molecular_weight, num_atoms, hba, hbd, fraction_sp2, valence, general_electronegativity (**Note: logP excluded as it contributed too much to predictions**)
    - **6 Global 3D Features**: volume, width, length, height, dipole_momentum, angle
 
 ### 2. **Model Architecture**
@@ -122,6 +122,7 @@ If you use this implementation, please cite the original paper:
 
 ## Notes
 
+- **logP Exclusion**: The paper mentions excluding logP (octanol-water partition coefficient) from the features as it contributed too much to predictions. This makes sense since logP is essentially a measure of lipophilicity itself, so including it when predicting lipophilicity or solubility would be circular reasoning.
 - The paper mentions removing 2 molecules from the Lipophilicity dataset where RDKit couldn't compute 3D structures. This is handled gracefully in the code with fallback values.
 - The no-pooling approach is a key innovation showing that for some properties (ESOL, FreeSolv), using peripheral atoms' predictions is more effective than averaging over all atoms.
 - All hyperparameters are set to the paper's optimal values by default.

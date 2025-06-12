@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from rdkit import Chem
-from rdkit.Chem import rdMolDescriptors, Descriptors, AllChem, rdPartialCharges
+from rdkit.Chem import rdMolDescriptors, AllChem, rdPartialCharges
 import torch
 from torch_geometric.data import Data
 
@@ -81,12 +81,13 @@ def get_base_feature_dimension():
     Calculate the base feature dimension according to the paper.
     
     Returns:
-    - int: Base feature dimension (36 = 14 atomic + 22 molecular)
+    - int: Base feature dimension (35 = 14 atomic + 21 molecular)
     """
     # According to the paper:
     # 14 atomic-level features (per atom)
-    # 22 molecular-level features (16 molecular + 6 global 3D)
-    return 36
+    # 21 molecular-level features (15 molecular + 6 global 3D)
+    # Note: logP was removed as it contributed too much to predictions
+    return 35
 
 
 def compute_3d_features(mol):
@@ -172,8 +173,10 @@ def create_atom_features(smiles_list, features_dict=None):
     
     Features according to the paper:
     - 14 Atomic-Level Features (per atom)
-    - 22 Molecular-Level Features (16 molecular + 6 global 3D)
-    Total: 36 features per atom
+    - 21 Molecular-Level Features (15 molecular + 6 global 3D)
+    Total: 35 features per atom
+    
+    Note: logP was excluded as it contributed too much to predictions
     
     Parameters:
     - smiles_list: List of SMILES strings
@@ -199,7 +202,7 @@ def create_atom_features(smiles_list, features_dict=None):
     }
 
     # Print feature information
-    print(f"Feature dimensions: Total=36 (14 atomic + 22 molecular)")
+    print(f"Feature dimensions: Total=35 (14 atomic + 21 molecular)")
     
     x = []
     computed_3d_features = []
@@ -230,7 +233,8 @@ def create_atom_features(smiles_list, features_dict=None):
         # Initialize an empty list to store atom features
         result = []
         
-        # === Calculate 16 Molecular-Level Features (same for all atoms) ===
+        # === Calculate 15 Molecular-Level Features (same for all atoms) ===
+        # Note: logP removed as it contributed too much to predictions
         
         # 1. has_ring
         has_ring = int(len(mol.GetRingInfo().AtomRings()) > 0)
@@ -259,25 +263,22 @@ def create_atom_features(smiles_list, features_dict=None):
         # 9. molecular_weight
         molecular_weight = rdMolDescriptors.CalcExactMolWt(mol)
         
-        # 10. logP
-        logP = Descriptors.MolLogP(mol)
-        
-        # 11. num_atoms
+        # 10. num_atoms
         num_atoms = mol.GetNumAtoms()
         
-        # 12. hba (hydrogen bond acceptors)
+        # 11. hba (hydrogen bond acceptors)
         hba = rdMolDescriptors.CalcNumHBA(mol)
         
-        # 13. hbd (hydrogen bond donors)
+        # 12. hbd (hydrogen bond donors)
         hbd = rdMolDescriptors.CalcNumHBD(mol)
         
-        # 14. fraction_sp2
+        # 13. fraction_sp2
         fraction_sp2 = sum(1 for atom in mol.GetAtoms() if atom.GetHybridization() == Chem.HybridizationType.SP2) / num_atoms
         
-        # 15. valence (global)
+        # 14. valence (global)
         valence = sum(atom.GetTotalValence() for atom in mol.GetAtoms())
         
-        # 16. general_electronegativity (average)
+        # 15. general_electronegativity (average)
         total_electronegativity = sum(electronegativity_dict.get(atom.GetAtomicNum(), 0) for atom in mol.GetAtoms())
         general_electronegativity = total_electronegativity / num_atoms if num_atoms > 0 else 0
         
@@ -357,7 +358,7 @@ def create_atom_features(smiles_list, features_dict=None):
                 vdw_radius_scaled,          # 13
                 cov_radius_scaled,          # 14
                 
-                # 16 Molecular-Level Features
+                # 15 Molecular-Level Features (logP excluded)
                 has_ring,                   # 15
                 is_aromatic,                # 16
                 formal_charge,              # 17
@@ -367,21 +368,21 @@ def create_atom_features(smiles_list, features_dict=None):
                 num_rotatable_bonds,        # 21
                 polar_surface_area,         # 22
                 molecular_weight,           # 23
-                logP,                       # 24
-                num_atoms,                  # 25
-                hba,                        # 26
-                hbd,                        # 27
-                fraction_sp2,               # 28
-                valence,                    # 29
-                general_electronegativity,  # 30
+                # logP removed              # (was 24)
+                num_atoms,                  # 24
+                hba,                        # 25
+                hbd,                        # 26
+                fraction_sp2,               # 27
+                valence,                    # 28
+                general_electronegativity,  # 29
                 
                 # 6 Global 3D Features
-                features_3d['volume'],          # 31
-                features_3d['width'],           # 32
-                features_3d['length'],          # 33
-                features_3d['height'],          # 34
-                features_3d['dipole_momentum'], # 35
-                features_3d['angle']            # 36
+                features_3d['volume'],          # 30
+                features_3d['width'],           # 31
+                features_3d['length'],          # 32
+                features_3d['height'],          # 33
+                features_3d['dipole_momentum'], # 34
+                features_3d['angle']            # 35
             ]
             
             # Append the atom features to the result
