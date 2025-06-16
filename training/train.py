@@ -56,7 +56,7 @@ def get_node_predictions_for_graphs(node_preds, batch, node_selection='last'):
 def train_lipophilicity_model(data_list, smiles_list, 
                              epochs=5000, 
                              batch_size=128,
-                             lr=0.001,
+                             lr=0.00075,  # Paper uses 0.00075
                              feature_dim=35, 
                              hidden_dim=28, 
                              early_stopping_patience=500,
@@ -64,10 +64,10 @@ def train_lipophilicity_model(data_list, smiles_list,
                              dropout=0,
                              base_dir="",
                              device_str=None,
-                             use_lr_scheduler=True,
+                             use_lr_scheduler=False,  # Paper doesn't use LR scheduler
                              use_no_pooling=False,
                              pooling_strategy='mean',
-                             clip_grad_norm=1.0):
+                             clip_grad_norm=0.0):  # Paper doesn't use gradient clipping
     """
     Train the TChemGNN model aligned with the paper specifications.
     
@@ -76,7 +76,7 @@ def train_lipophilicity_model(data_list, smiles_list,
     - smiles_list: List of SMILES strings
     - epochs: Maximum number of training epochs (5000 in paper)
     - batch_size: Batch size for training
-    - lr: Learning rate (paper uses RMSprop optimizer)
+    - lr: Learning rate (paper uses RMSprop optimizer with 0.00075)
     - feature_dim: Dimension of atom features (35 in paper, logP excluded)
     - hidden_dim: Dimension of hidden layers (28 in paper)
     - early_stopping_patience: Number of epochs to wait before early stopping
@@ -84,10 +84,10 @@ def train_lipophilicity_model(data_list, smiles_list,
     - dropout: Dropout probability (0 in paper)
     - base_dir: Base directory for outputs
     - device_str: Optional string to specify device
-    - use_lr_scheduler: Whether to use learning rate scheduler
+    - use_lr_scheduler: Whether to use learning rate scheduler (FALSE in paper)
     - use_no_pooling: Whether to use no-pooling approach (True for ESOL/FreeSolv)
     - pooling_strategy: Strategy for pooling ('mean', 'last', 'first')
-    - clip_grad_norm: Maximum gradient norm for clipping (0 to disable)
+    - clip_grad_norm: Maximum gradient norm for clipping (0 = disabled, as in paper)
     
     Returns:
     - model: Trained model
@@ -147,6 +147,8 @@ def train_lipophilicity_model(data_list, smiles_list,
     val_data = [data_list[i] for i in val_indices]
     test_data = [data_list[i] for i in test_indices]
     
+    print(f"Data split: {len(train_data)} train, {len(val_data)} val, {len(test_data)} test")
+    
     # Create DataLoaders
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_data, batch_size=batch_size)
@@ -162,14 +164,21 @@ def train_lipophilicity_model(data_list, smiles_list,
     
     # Use RMSprop optimizer as specified in the paper
     optimizer = optim.RMSprop(model.parameters(), lr=lr)
+    print(f"Using RMSprop optimizer with lr={lr} (as in paper)")
     
-    # Learning rate scheduler
+    # Learning rate scheduler (disabled by default as per paper)
     if use_lr_scheduler:
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=int(epochs/30))
-        print("Using ReduceLROnPlateau learning rate scheduler")
+        print("WARNING: Using ReduceLROnPlateau learning rate scheduler (NOT in paper)")
     else:
         scheduler = None
-        print("Learning rate scheduler disabled")
+        print("Learning rate scheduler disabled (as in paper)")
+    
+    # Gradient clipping (disabled by default as per paper)
+    if clip_grad_norm > 0:
+        print(f"WARNING: Using gradient clipping with max norm {clip_grad_norm} (NOT in paper)")
+    else:
+        print("Gradient clipping disabled (as in paper)")
     
     criterion = nn.MSELoss()
     
@@ -189,17 +198,22 @@ def train_lipophilicity_model(data_list, smiles_list,
     early_stopping_counter = 0
     best_epoch = 0
     
-    # Training loop
+    # Training loop with proper progress tracking
     print(f"Starting training for {epochs} epochs...")
+    print(f"Early stopping patience: {early_stopping_patience}")
     print(f"Pooling strategy: {pooling_strategy}")
-    pbar = tqdm(range(1, epochs + 1), desc="Training Progress", position=0)
+    
+    # Create a comprehensive progress bar
+    pbar = tqdm(range(1, epochs + 1), desc="Training Progress", position=0, leave=True)
     
     for epoch in pbar:
         model.train()
         epoch_start_time = time.time()
         train_loss = 0
         train_rmse = 0
+        num_batches = 0
         
+        # Training loop
         for batch in train_loader:
             batch = batch.to(device)
             optimizer.zero_grad()
@@ -217,7 +231,7 @@ def train_lipophilicity_model(data_list, smiles_list,
             
             loss.backward()
             
-            # Gradient clipping if specified
+            # Gradient clipping if specified (disabled by default as per paper)
             if clip_grad_norm > 0:
                 clip_grad_norm_(model.parameters(), clip_grad_norm)
             
@@ -229,6 +243,7 @@ def train_lipophilicity_model(data_list, smiles_list,
             
             train_loss += loss.item() * batch.num_graphs
             train_rmse += batch_rmse.item() * batch.num_graphs
+            num_batches += 1
             
         # Calculate average training metrics
         avg_train_loss = train_loss / len(train_loader.dataset)
@@ -259,11 +274,11 @@ def train_lipophilicity_model(data_list, smiles_list,
         val_loss = val_loss / len(val_loader.dataset)
         val_rmse = val_rmse / len(val_loader.dataset)
         
-        # Update learning rate scheduler
-        if use_lr_scheduler:
+        # Update learning rate scheduler if enabled
+        if use_lr_scheduler and scheduler is not None:
             scheduler.step(val_loss)
             
-        # Log metrics at every epoch
+        # Log metrics at every epoch for continuous tracking
         log_metrics_to_csv(epoch, avg_train_loss, avg_train_rmse, val_loss, val_rmse, log_dir=log_dir)
         
         # Check for early stopping
@@ -277,23 +292,25 @@ def train_lipophilicity_model(data_list, smiles_list,
         else:
             early_stopping_counter += 1
         
-        # Update progress bar with metrics
+        # Update progress bar with comprehensive metrics
+        current_lr = optimizer.param_groups[0]['lr']
         pbar.set_postfix({
             'train_loss': f'{avg_train_loss:.4f}',
             'train_rmse': f'{avg_train_rmse:.4f}',
             'val_loss': f'{val_loss:.4f}',
             'val_rmse': f'{val_rmse:.4f}',
             'best_epoch': best_epoch,
-            'lr': f'{optimizer.param_groups[0]["lr"]:.6f}',
+            'lr': f'{current_lr:.6f}',
             'patience': f'{early_stopping_counter}/{early_stopping_patience}'
         })
         
         # Early stopping check
         if early_stopping_counter >= early_stopping_patience:
-            pbar.write(f"Early stopping triggered after {epoch} epochs")
+            pbar.write(f"\nEarly stopping triggered after {epoch} epochs")
+            pbar.write(f"Best validation loss: {best_val_loss:.4f} at epoch {best_epoch}")
             break
         
-        # Log detailed metrics every 50 epochs
+        # Log detailed metrics and create visualizations every 50 epochs
         if epoch % 50 == 0:
             model.eval()
             
@@ -301,7 +318,7 @@ def train_lipophilicity_model(data_list, smiles_list,
             epoch_dir = os.path.join(log_dir, f'epoch_{epoch}')
             os.makedirs(epoch_dir, exist_ok=True)
             
-            # Get predictions for all datasets
+            # Get predictions for all datasets including test
             with torch.no_grad():
                 # Testing
                 test_loss = 0
@@ -326,16 +343,18 @@ def train_lipophilicity_model(data_list, smiles_list,
                 
                 avg_test_loss = test_loss / len(test_loader.dataset)
                 avg_test_rmse = test_rmse / len(test_loader.dataset)
+                
+                # Log to progress bar
                 pbar.write(f"Epoch {epoch} - Test Loss: {avg_test_loss:.4f}, Test RMSE: {avg_test_rmse:.4f}")
                 
                 # Update metrics CSV with test metrics
                 log_metrics_to_csv(epoch, avg_train_loss, avg_train_rmse, val_loss, val_rmse, 
                                   avg_test_loss, avg_test_rmse, log_dir)
             
-            # Get full dataset predictions for logging and visualization
+            # Get full dataset predictions for detailed logging and visualization
             pbar.write(f"Generating visualizations for epoch {epoch}...")
             
-            # Evaluate and log predictions
+            # Evaluate and log predictions with detailed node-level information
             _, _, train_graph_preds, train_node_preds, train_node_batch, train_targets = evaluate_model_with_nodes(
                 model, DataLoader(train_data, batch_size=batch_size), criterion, device
             )
@@ -360,19 +379,26 @@ def train_lipophilicity_model(data_list, smiles_list,
             log_node_predictions_to_csv(val_node_preds, val_node_batch, val_targets, smiles_list, val_indices, epoch_dir, 'val')
             log_node_predictions_to_csv(test_node_preds, test_node_batch, test_targets, smiles_list, test_indices, epoch_dir, 'test')
             
-            # Visualize results
-            visualize_results(log_dir, results_dir, epoch)
-            pbar.write(f"Completed visualizations for epoch {epoch}")
+            # Create visualizations
+            try:
+                visualize_results(log_dir, results_dir, epoch)
+                pbar.write(f"Completed visualizations for epoch {epoch}")
+            except Exception as e:
+                pbar.write(f"Warning: Visualization failed for epoch {epoch}: {e}")
     
     pbar.close()
     
     # Load the best model
-    model.load_state_dict(torch.load(os.path.join(checkpoints_dir, 'best_model.pt')))
+    best_model_path = os.path.join(checkpoints_dir, 'best_model.pt')
+    if os.path.exists(best_model_path):
+        model.load_state_dict(torch.load(best_model_path))
+        print(f"Loaded best model from epoch {best_epoch}")
+    else:
+        print("Warning: Best model file not found, using current model")
     
     # Final evaluation
     print("\nPerforming final evaluation on the best model...")
     
-    # Final evaluation code similar to above...
     train_loss, train_rmse, _, _, _, _ = evaluate_model_with_nodes(
         model, DataLoader(train_data, batch_size=batch_size), criterion, device
     )
@@ -390,7 +416,14 @@ def train_lipophilicity_model(data_list, smiles_list,
     print(f"  Val Loss: {val_loss:.4f} | Val RMSE: {val_rmse:.4f}")
     print(f"  Test Loss: {test_loss:.4f} | Test RMSE: {test_rmse:.4f}")
     
+    # Log final results
+    log_metrics_to_csv('final', train_loss, train_rmse, val_loss, val_rmse, test_loss, test_rmse, log_dir)
+    
     # Create final visualizations
-    visualize_results(log_dir, results_dir, best_epoch)
+    try:
+        visualize_results(log_dir, results_dir, best_epoch)
+        print("Final visualizations created")
+    except Exception as e:
+        print(f"Warning: Final visualization failed: {e}")
     
     return model, log_dir, results_dir, checkpoints_dir

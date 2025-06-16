@@ -81,7 +81,7 @@ def parse_args():
                       choices=['auto', 'mean', 'last_node', 'first_node'],
                       help='Pooling strategy: auto (dataset-specific), mean, last_node, first_node')
     
-    # Training parameters (aligned with paper)
+    # Training parameters (aligned with paper - NO LR SCHEDULER, NO GRADIENT CLIPPING)
     parser.add_argument('--batch_size', type=int, default=16,
                       help='Batch size for training')
     parser.add_argument('--epochs', type=int, default=5000,
@@ -90,12 +90,18 @@ def parse_args():
                       help='Learning rate (paper mentions RMSprop optimizer)')
     parser.add_argument('--seed', type=int, default=42,
                       help='Random seed for reproducibility')
-    parser.add_argument('--clip_grad_norm', type=float, default=1.0,
-                      help='Maximum gradient norm for gradient clipping (0 to disable)')
-    parser.add_argument('--use_lr_scheduler', action='store_true', default=True,
-                      help='Use learning rate scheduler (ReduceLROnPlateau)')
-    parser.add_argument('--no_lr_scheduler', action='store_false', dest='use_lr_scheduler',
-                      help='Disable learning rate scheduler')
+    
+    # Paper says NO gradient clipping and NO LR scheduler
+    parser.add_argument('--clip_grad_norm', type=float, default=0.0,
+                      help='Maximum gradient norm for gradient clipping (0 = disabled, as in paper)')
+    parser.add_argument('--use_lr_scheduler', action='store_true', default=False,
+                      help='Use learning rate scheduler (DISABLED by default as in paper)')
+    parser.add_argument('--force_lr_scheduler', action='store_true',
+                      help='Force enable learning rate scheduler (overrides paper settings)')
+    
+    # Early stopping
+    parser.add_argument('--early_stopping_patience', type=int, default=500,
+                      help='Early stopping patience (default: 500)')
     
     # Device parameter
     parser.add_argument('--device', type=str, default=None,
@@ -205,8 +211,13 @@ def main():
     
     print(f"Using data file: {files['data_file']}")
     
+    # Handle LR scheduler setting according to paper
+    use_lr_scheduler = args.force_lr_scheduler or args.use_lr_scheduler
+    if use_lr_scheduler:
+        print("WARNING: Paper does not use learning rate scheduler, but it's enabled!")
+    
     # Display model configuration
-    print(f"\nModel Configuration (TChemGNN):")
+    print(f"\nModel Configuration (TChemGNN Paper):")
     print(f"  Feature dimension: {args.feature_dim} (14 atomic + 21 molecular, logP excluded)")
     print(f"  Hidden dimension: {args.hidden_dim}")
     print(f"  Number of GAT layers: 5")
@@ -216,12 +227,14 @@ def main():
     print(f"  Pooling: {pooling_strategy}")
     
     # Display training configuration
-    print(f"\nTraining Configuration:")
+    print(f"\nTraining Configuration (Paper-aligned):")
     print(f"  Batch size: {args.batch_size}")
     print(f"  Learning rate: {args.lr}")
     print(f"  Optimizer: RMSprop")
     print(f"  Max epochs: {args.epochs}")
-    print(f"  LR scheduler: {'Enabled' if args.use_lr_scheduler else 'Disabled'}")
+    print(f"  Early stopping patience: {args.early_stopping_patience}")
+    print(f"  LR scheduler: {'Enabled (NOT in paper!)' if use_lr_scheduler else 'Disabled (as in paper)'}")
+    print(f"  Gradient clipping: {'Enabled' if args.clip_grad_norm > 0 else 'Disabled (as in paper)'}")
     print(f"  Device: {args.device if args.device else 'Auto (will use CUDA if available)'}")
     
     print("\nLoading data...")
@@ -286,12 +299,12 @@ def main():
         lr=args.lr,
         feature_dim=args.feature_dim,
         hidden_dim=args.hidden_dim,
-        early_stopping_patience=int(args.epochs/10),
+        early_stopping_patience=args.early_stopping_patience,
         heads=args.heads,
         dropout=args.dropout,
         base_dir=output_dir,
         device_str=args.device,
-        use_lr_scheduler=args.use_lr_scheduler,
+        use_lr_scheduler=use_lr_scheduler,
         use_no_pooling=use_no_pooling,
         pooling_strategy=pooling_strategy,
         clip_grad_norm=args.clip_grad_norm
