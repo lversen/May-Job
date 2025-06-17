@@ -5,7 +5,7 @@ import glob
 from datetime import datetime
 
 from data import load_data, extract_edge_indices, create_atom_features, prepare_data_for_training, get_base_feature_dimension
-from models import GSR
+from models import GSR, GSRAlternative
 from training import train_lipophilicity_model
 from visualization.gif_generator import create_training_animation
 from utils import set_seed, format_y_values
@@ -73,12 +73,15 @@ def parse_args():
                       help='Dimension of atom features (auto-calculated based on logP setting if not specified)')
     
     # Model parameters (aligned with paper)
+    parser.add_argument('--model_type', type=str, default='paper',
+                      choices=['paper', 'alternative'],
+                      help='Type of model to use (paper: original GSR, alternative: alternative GSR with layer norm)')
     parser.add_argument('--hidden_dim', type=int, default=28,
                       help='Dimension of hidden layers (28 gives best results in paper)')
     parser.add_argument('--heads', type=int, default=1,
-                      help='Number of attention heads in GAT (1 in paper)')
+                      help='Number of attention heads in GAT (1 in paper, 4 for alternative)')
     parser.add_argument('--dropout', type=float, default=0,
-                      help='Dropout probability (0 in paper)')
+                      help='Dropout probability (0 in paper, 0.2 for alternative)')
     
     # Pooling strategy
     parser.add_argument('--pooling_strategy', type=str, default='auto',
@@ -182,6 +185,16 @@ def main():
     if args.feature_dim is None:
         args.feature_dim = get_base_feature_dimension(args.include_logp)
     
+    # Adjust default parameters based on model type
+    if args.model_type == 'alternative':
+        # Set better defaults for alternative model if not explicitly set
+        if args.heads == 1:  # Default paper value
+            args.heads = 4
+        if args.dropout == 0:  # Default paper value
+            args.dropout = 0.2
+        if args.hidden_dim == 28:  # May want different default for alternative
+            args.hidden_dim = 64
+    
     # Start timing
     start_time = time.time()
     
@@ -189,7 +202,7 @@ def main():
     output_dir = os.path.join(args.output_dir, args.dataset)
     
     # Add configuration info to output directory name
-    output_dir += f"_hidden{args.hidden_dim}"
+    output_dir += f"_{args.model_type}_hidden{args.hidden_dim}"
     if args.include_logp:
         output_dir += "_with_logp"
     if args.pooling_strategy != 'auto':
@@ -202,6 +215,16 @@ def main():
     print(f"Starting at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Expected RMSE from paper: {dataset_config['expected_rmse']}")
     print("=" * 50)
+    
+    # Model type info
+    print(f"\nModel Configuration:")
+    print(f"  Model type: {args.model_type}")
+    if args.model_type == 'paper':
+        print("  - Paper-aligned GSR with tanh activation")
+        print("  - 5 GAT layers, ~3.7K parameters")
+    else:
+        print("  - Alternative GSR with ReLU activation and layer norm")
+        print("  - 4 GAT layers, multi-head attention")
     
     # Feature configuration info
     print(f"\nFeature Configuration:")
@@ -234,17 +257,18 @@ def main():
         print("WARNING: Paper does not use learning rate scheduler, but it's enabled!")
     
     # Display model configuration
-    print(f"\nModel Configuration (TChemGNN Paper):")
+    print(f"\nModel Configuration:")
     print(f"  Feature dimension: {args.feature_dim} (14 atomic + {15 + (1 if args.include_logp else 0)} molecular + 6 3D)")
     print(f"  Hidden dimension: {args.hidden_dim}")
-    print(f"  Number of GAT layers: 5")
+    print(f"  Number of GAT layers: {5 if args.model_type == 'paper' else 4}")
     print(f"  Attention heads: {args.heads}")
-    print(f"  Activation: tanh")
+    print(f"  Activation: {'tanh' if args.model_type == 'paper' else 'ReLU'}")
     print(f"  Dropout: {args.dropout}")
     print(f"  Pooling: {pooling_strategy}")
+    print(f"  Layer norm: {'No' if args.model_type == 'paper' else 'Yes'}")
     
     # Display training configuration
-    print(f"\nTraining Configuration (Paper-aligned):")
+    print(f"\nTraining Configuration:")
     print(f"  Batch size: {args.batch_size}")
     print(f"  Learning rate: {args.lr}")
     print(f"  Optimizer: RMSprop")
@@ -329,7 +353,8 @@ def main():
         use_lr_scheduler=use_lr_scheduler,
         use_no_pooling=use_no_pooling,
         pooling_strategy=pooling_strategy,
-        clip_grad_norm=args.clip_grad_norm
+        clip_grad_norm=args.clip_grad_norm,
+        model_type=args.model_type
     )
         
     # Create animated GIFs from the training visualizations if requested
@@ -350,6 +375,7 @@ def main():
     print(f"Logs saved to {log_dir}")
     print(f"Model checkpoints saved to {checkpoints_dir}")
     print(f"Expected RMSE from paper: {dataset_config['expected_rmse']}")
+    print(f"Model type: {args.model_type}")
     print(f"LogP feature: {'INCLUDED' if args.include_logp else 'EXCLUDED (as in paper)'}")
     print("=" * 50)
 

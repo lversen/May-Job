@@ -17,18 +17,19 @@ import time
 
 # Import our modules directly for integrated training
 from data import load_data, extract_edge_indices, create_atom_features, prepare_data_for_training
-from models import GSR
+from models import GSR, GSRAlternative
 from training import train_lipophilicity_model
 from utils import set_seed, format_y_values
 
 
 class ExperimentRunner:
-    def __init__(self, data_dir='datasets', output_dir='experiment_results', quick=False):
+    def __init__(self, data_dir='datasets', output_dir='experiment_results', quick=False, model_type='paper'):
         self.data_dir = data_dir
         self.output_dir = output_dir
         self.quick = quick
+        self.model_type = model_type
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.results_dir = os.path.join(output_dir, f'full_run_{self.timestamp}')
+        self.results_dir = os.path.join(output_dir, f'full_run_{model_type}_{self.timestamp}')
         os.makedirs(self.results_dir, exist_ok=True)
         
         # Expected results from paper
@@ -108,6 +109,7 @@ class ExperimentRunner:
         
         print(f"\n{'='*50}")
         print(f"Running integrated experiment for {dataset.upper()}")
+        print(f"Model type: {self.model_type}")
         print(f"Expected RMSE from paper: {config['expected_rmse']}")
         print(f"{'='*50}")
         
@@ -169,7 +171,18 @@ class ExperimentRunner:
             use_no_pooling = config['use_no_pooling']
             pooling_strategy = 'last_node' if use_no_pooling else 'mean'
             
+            # Set model-specific parameters
+            if self.model_type == 'alternative':
+                heads = 4
+                dropout = 0.2
+                hidden_dim = 64
+            else:
+                heads = 1
+                dropout = 0
+                hidden_dim = 28
+            
             print(f"Using pooling strategy: {pooling_strategy}")
+            print(f"Model settings: heads={heads}, dropout={dropout}, hidden_dim={hidden_dim}")
             print(f"Paper settings: NO gradient clipping, NO learning rate scheduler")
             
             # Train model with live progress
@@ -183,16 +196,17 @@ class ExperimentRunner:
                 batch_size=16,
                 lr=0.00075,
                 feature_dim=35,
-                hidden_dim=28,
+                hidden_dim=hidden_dim,
                 early_stopping_patience=early_stopping_patience,
-                heads=1,
-                dropout=0,
+                heads=heads,
+                dropout=dropout,
                 base_dir=output_dir,
                 device_str=None,
                 use_lr_scheduler=False,  # Paper doesn't use LR scheduler
                 use_no_pooling=use_no_pooling,
                 pooling_strategy=pooling_strategy,
-                clip_grad_norm=0.0  # Paper doesn't use gradient clipping
+                clip_grad_norm=0.0,  # Paper doesn't use gradient clipping
+                model_type=self.model_type
             )
             
             end_time = time.time()
@@ -221,7 +235,8 @@ class ExperimentRunner:
                 'status': 'success',
                 'epochs_trained': epochs,
                 'log_dir': log_dir,
-                'results_dir': results_dir_exp
+                'results_dir': results_dir_exp,
+                'model_type': self.model_type
             }
             
             if test_rmse is not None:
@@ -237,7 +252,8 @@ class ExperimentRunner:
             print(f"✗ {dataset} failed with exception: {str(e)}")
             self.results[f'{dataset}_main'] = {
                 'status': 'error',
-                'error': str(e)
+                'error': str(e),
+                'model_type': self.model_type
             }
             return False
     
@@ -247,6 +263,7 @@ class ExperimentRunner:
         
         print(f"\n{'='*50}")
         print(f"Running subprocess experiment for {dataset.upper()}")
+        print(f"Model type: {self.model_type}")
         print(f"Expected RMSE from paper: {config['expected_rmse']}")
         print(f"{'='*50}")
         
@@ -261,6 +278,7 @@ class ExperimentRunner:
             '--epochs', str(epochs),
             '--early_stopping_patience', str(epochs // 10),
             '--clip_grad_norm', '0.0',  # Paper doesn't use gradient clipping
+            '--model_type', self.model_type,
             # Note: --use_lr_scheduler defaults to False in updated main.py
         ]
         
@@ -278,7 +296,8 @@ class ExperimentRunner:
                     'test_rmse': None,  # Would need to parse logs
                     'expected_rmse': self.expected_results[dataset],
                     'time_seconds': end_time - start_time,
-                    'status': 'success'
+                    'status': 'success',
+                    'model_type': self.model_type
                 }
                 print(f"✓ {dataset} completed via subprocess")
                 return True
@@ -286,7 +305,8 @@ class ExperimentRunner:
                 print(f"✗ {dataset} failed with return code {result.returncode}")
                 self.results[f'{dataset}_main'] = {
                     'status': 'failed',
-                    'return_code': result.returncode
+                    'return_code': result.returncode,
+                    'model_type': self.model_type
                 }
                 return False
                 
@@ -294,7 +314,8 @@ class ExperimentRunner:
             print(f"✗ {dataset} failed with exception: {str(e)}")
             self.results[f'{dataset}_main'] = {
                 'status': 'error',
-                'error': str(e)
+                'error': str(e),
+                'model_type': self.model_type
             }
             return False
     
@@ -302,6 +323,7 @@ class ExperimentRunner:
         """Run the main experiments for all four datasets."""
         print("=" * 70)
         print("Running Main Experiments (Tables 1-4 from paper)")
+        print(f"Model type: {self.model_type}")
         if self.quick:
             print("QUICK MODE: Reduced epochs for faster testing")
         else:
@@ -460,7 +482,8 @@ class ExperimentRunner:
             f.write("TChemGNN Paper Experiments - Comprehensive Report\n")
             f.write("=" * 70 + "\n")
             f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"Mode: {'QUICK' if self.quick else 'FULL'}\n\n")
+            f.write(f"Mode: {'QUICK' if self.quick else 'FULL'}\n")
+            f.write(f"Model type: {self.model_type}\n\n")
             
             # Main experiment results
             f.write("1. MAIN EXPERIMENTS (Comparison with Paper Results)\n")
@@ -488,11 +511,26 @@ class ExperimentRunner:
             f.write(f"\n\n2. EXPERIMENT SETTINGS\n")
             f.write("-" * 50 + "\n")
             f.write(f"Mode: {'QUICK (reduced epochs)' if self.quick else 'FULL (paper-accurate)'}\n")
-            f.write("Paper settings applied:\n")
+            f.write(f"Model type: {self.model_type}\n")
+            if self.model_type == 'paper':
+                f.write("Paper model settings applied:\n")
+                f.write("  - 5 GAT layers with tanh activation\n")
+                f.write("  - 28 hidden dimensions\n")
+                f.write("  - 1 attention head\n")
+                f.write("  - No dropout\n")
+                f.write("  - ~3.7K parameters\n")
+            else:
+                f.write("Alternative model settings applied:\n")
+                f.write("  - 4 GAT layers with ReLU activation\n")
+                f.write("  - 64 hidden dimensions\n")
+                f.write("  - 4 attention heads\n")
+                f.write("  - 0.2 dropout\n")
+                f.write("  - Layer normalization\n")
+                
+            f.write("Common settings:\n")
             f.write("  - NO learning rate scheduler\n")
             f.write("  - NO gradient clipping\n")
             f.write("  - RMSprop optimizer with lr=0.00075\n")
-            f.write("  - GAT layers with tanh activation\n")
             f.write("  - 35 features (14 atomic + 21 molecular, logP excluded)\n")
             
             f.write("\n" + "=" * 70 + "\n")
@@ -501,7 +539,7 @@ class ExperimentRunner:
                 f.write("Quick experiments completed. For full paper comparison, run without --quick.\n")
             else:
                 f.write("Full experiments completed with paper-accurate settings.\n")
-            f.write("All training used paper-specified settings (no LR scheduler, no grad clipping).\n")
+            f.write(f"All training used {self.model_type} model architecture.\n")
         
         print(f"✓ Report saved to: {report_file}")
         
@@ -517,6 +555,7 @@ class ExperimentRunner:
         print("TChemGNN - Running All Experiments from the Paper")
         print("=" * 70)
         print(f"Mode: {'QUICK' if self.quick else 'FULL'}")
+        print(f"Model type: {self.model_type}")
         print(f"Training method: {'INTEGRATED (live progress)' if use_integrated else 'SUBPROCESS'}")
         print(f"Output directory: {self.results_dir}\n")
         
@@ -547,6 +586,9 @@ def main():
                       help='Directory for all outputs')
     parser.add_argument('--quick', action='store_true',
                       help='Run quick version with fewer epochs')
+    parser.add_argument('--model_type', type=str, default='paper',
+                      choices=['paper', 'alternative'],
+                      help='Type of model to use (paper: original GSR, alternative: alternative GSR)')
     parser.add_argument('--use_subprocess', action='store_true',
                       help='Use subprocess calls instead of integrated training (less progress info)')
     parser.add_argument('--skip_auxiliary', action='store_true',
@@ -575,10 +617,10 @@ def main():
         sys.exit(1)
     
     # Run experiments
-    runner = ExperimentRunner(args.data_dir, args.output_dir, quick=args.quick)
+    runner = ExperimentRunner(args.data_dir, args.output_dir, quick=args.quick, model_type=args.model_type)
     
     if args.main_only:
-        print("Running MAIN EXPERIMENTS ONLY")
+        print(f"Running MAIN EXPERIMENTS ONLY with {args.model_type} model")
         runner.run_main_experiments(use_integrated=not args.use_subprocess)
         runner.generate_report()
     else:

@@ -67,7 +67,8 @@ def train_lipophilicity_model(data_list, smiles_list,
                              use_lr_scheduler=False,  # Paper doesn't use LR scheduler
                              use_no_pooling=False,
                              pooling_strategy='mean',
-                             clip_grad_norm=0.0):  # Paper doesn't use gradient clipping
+                             clip_grad_norm=0.0,  # Paper doesn't use gradient clipping
+                             model_type='paper'):  # New parameter to choose model type
     """
     Train the TChemGNN model aligned with the paper specifications.
     
@@ -88,6 +89,7 @@ def train_lipophilicity_model(data_list, smiles_list,
     - use_no_pooling: Whether to use no-pooling approach (True for ESOL/FreeSolv)
     - pooling_strategy: Strategy for pooling ('mean', 'last', 'first')
     - clip_grad_norm: Maximum gradient norm for clipping (0 = disabled, as in paper)
+    - model_type: Type of model to use ('paper' for GSR, 'alternative' for GSRAlternative)
     
     Returns:
     - model: Trained model
@@ -154,13 +156,25 @@ def train_lipophilicity_model(data_list, smiles_list,
     val_loader = DataLoader(val_data, batch_size=batch_size)
     test_loader = DataLoader(test_data, batch_size=batch_size)
     
-    # Create model aligned with paper architecture
-    from models.gsr import GSR
-    model = GSR(in_channels=feature_dim, 
-                hidden_channels=hidden_dim, 
-                out_channels=1, 
-                heads=heads, 
-                dropout=dropout).to(device)
+    # Create model based on model_type
+    if model_type == 'paper':
+        from models.gsr import GSR
+        model = GSR(in_channels=feature_dim, 
+                    hidden_channels=hidden_dim, 
+                    out_channels=1, 
+                    heads=heads, 
+                    dropout=dropout).to(device)
+        print(f"Using paper-aligned GSR model")
+    elif model_type == 'alternative':
+        from models.gsr_alternative import GSRAlternative
+        model = GSRAlternative(in_channels=feature_dim, 
+                              hidden_channels=hidden_dim, 
+                              out_channels=1, 
+                              heads=heads, 
+                              dropout=dropout).to(device)
+        print(f"Using alternative GSR model")
+    else:
+        raise ValueError(f"Unknown model_type: {model_type}. Choose 'paper' or 'alternative'.")
     
     # Use RMSprop optimizer as specified in the paper
     optimizer = optim.RMSprop(model.parameters(), lr=lr)
@@ -202,6 +216,7 @@ def train_lipophilicity_model(data_list, smiles_list,
     print(f"Starting training for {epochs} epochs...")
     print(f"Early stopping patience: {early_stopping_patience}")
     print(f"Pooling strategy: {pooling_strategy}")
+    print(f"Model type: {model_type}")
     
     # Create a comprehensive progress bar
     pbar = tqdm(range(1, epochs + 1), desc="Training Progress", position=0, leave=True)
@@ -301,7 +316,8 @@ def train_lipophilicity_model(data_list, smiles_list,
             'val_rmse': f'{val_rmse:.4f}',
             'best_epoch': best_epoch,
             'lr': f'{current_lr:.6f}',
-            'patience': f'{early_stopping_counter}/{early_stopping_patience}'
+            'patience': f'{early_stopping_counter}/{early_stopping_patience}',
+            'model': model_type
         })
         
         # Early stopping check
@@ -411,7 +427,7 @@ def train_lipophilicity_model(data_list, smiles_list,
         model, DataLoader(test_data, batch_size=batch_size), criterion, device
     )
     
-    print("\nFinal Evaluation (Best Model):")
+    print(f"\nFinal Evaluation (Best {model_type.capitalize()} Model):")
     print(f"  Train Loss: {train_loss:.4f} | Train RMSE: {train_rmse:.4f}")
     print(f"  Val Loss: {val_loss:.4f} | Val RMSE: {val_rmse:.4f}")
     print(f"  Test Loss: {test_loss:.4f} | Test RMSE: {test_rmse:.4f}")
