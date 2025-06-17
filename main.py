@@ -4,7 +4,7 @@ import time
 import glob
 from datetime import datetime
 
-from data import load_data, extract_edge_indices, create_atom_features, prepare_data_for_training
+from data import load_data, extract_edge_indices, create_atom_features, prepare_data_for_training, get_base_feature_dimension
 from models import GSR
 from training import train_lipophilicity_model
 from visualization.gif_generator import create_training_animation
@@ -66,9 +66,13 @@ def parse_args():
     parser.add_argument('--smiles_column', type=str, default=None,
                       help='Name of the SMILES column in the data file (overrides default)')
     
+    # Feature parameters
+    parser.add_argument('--include_logp', action='store_true',
+                      help='Include logP feature in molecular descriptors (excluded by default as in paper)')
+    parser.add_argument('--feature_dim', type=int, default=None,
+                      help='Dimension of atom features (auto-calculated based on logP setting if not specified)')
+    
     # Model parameters (aligned with paper)
-    parser.add_argument('--feature_dim', type=int, default=35,
-                      help='Dimension of atom features (35 in paper: 14 atomic + 21 molecular, logP excluded)')
     parser.add_argument('--hidden_dim', type=int, default=28,
                       help='Dimension of hidden layers (28 gives best results in paper)')
     parser.add_argument('--heads', type=int, default=1,
@@ -174,6 +178,10 @@ def main():
     # Set random seed
     set_seed(args.seed)
     
+    # Calculate feature dimension based on logP setting
+    if args.feature_dim is None:
+        args.feature_dim = get_base_feature_dimension(args.include_logp)
+    
     # Start timing
     start_time = time.time()
     
@@ -182,6 +190,8 @@ def main():
     
     # Add configuration info to output directory name
     output_dir += f"_hidden{args.hidden_dim}"
+    if args.include_logp:
+        output_dir += "_with_logp"
     if args.pooling_strategy != 'auto':
         output_dir += f"_{args.pooling_strategy}"
     
@@ -192,6 +202,13 @@ def main():
     print(f"Starting at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Expected RMSE from paper: {dataset_config['expected_rmse']}")
     print("=" * 50)
+    
+    # Feature configuration info
+    print(f"\nFeature Configuration:")
+    print(f"  Include logP: {'YES' if args.include_logp else 'NO (as in paper)'}")
+    print(f"  Total features: {args.feature_dim}")
+    if args.include_logp:
+        print("  WARNING: Paper excludes logP as it contributed too much to predictions!")
     
     # Determine pooling strategy
     if args.pooling_strategy == 'auto':
@@ -218,7 +235,7 @@ def main():
     
     # Display model configuration
     print(f"\nModel Configuration (TChemGNN Paper):")
-    print(f"  Feature dimension: {args.feature_dim} (14 atomic + 21 molecular, logP excluded)")
+    print(f"  Feature dimension: {args.feature_dim} (14 atomic + {15 + (1 if args.include_logp else 0)} molecular + 6 3D)")
     print(f"  Hidden dimension: {args.hidden_dim}")
     print(f"  Number of GAT layers: 5")
     print(f"  Attention heads: {args.heads}")
@@ -277,13 +294,18 @@ def main():
     print("Extracting molecular graph structures...")
     edge_index = extract_edge_indices(smiles_list)
     
-    # Create atom features (with 3D features computed on-the-fly)
+    # Create atom features with logP option
     print("Creating atom features with 3D molecular properties...")
-    x = create_atom_features(smiles_list, features_dict=None)
+    print(f"LogP feature: {'INCLUDED' if args.include_logp else 'EXCLUDED (as in paper)'}")
+    x = create_atom_features(smiles_list, features_dict=None, include_logp=args.include_logp)
     
     # Verify feature dimension
-    if len(x[0][0]) != args.feature_dim:
-        print(f"Warning: Expected {args.feature_dim} features but got {len(x[0][0])}")
+    actual_feature_dim = len(x[0][0])
+    if actual_feature_dim != args.feature_dim:
+        print(f"Warning: Expected {args.feature_dim} features but got {actual_feature_dim}")
+        args.feature_dim = actual_feature_dim  # Update to actual dimension
+    
+    print(f"Final feature dimension: {args.feature_dim}")
     
     # Prepare data for training
     print("Preparing data for model...")
@@ -328,6 +350,7 @@ def main():
     print(f"Logs saved to {log_dir}")
     print(f"Model checkpoints saved to {checkpoints_dir}")
     print(f"Expected RMSE from paper: {dataset_config['expected_rmse']}")
+    print(f"LogP feature: {'INCLUDED' if args.include_logp else 'EXCLUDED (as in paper)'}")
     print("=" * 50)
 
 
